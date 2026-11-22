@@ -3514,6 +3514,15 @@ kbd {
   color: var(--danger);
 }
 
+.quality-option-mismatch {
+  border-color: rgba(255, 212, 121, 0.35);
+}
+
+.quality-status-mismatch {
+  background: rgba(255, 212, 121, 0.12);
+  color: var(--warn);
+}
+
 .quality-status-checking,
 .quality-status-unknown {
   background: rgba(255, 255, 255, 0.05);

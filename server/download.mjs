@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -5,6 +6,12 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import {
+  audioFormatLabel,
+  codecToAudioFormat,
+  observedBitrateKbps,
+  sniffAudioFormat,
+} from './audio-format.mjs';
 import { config } from './config.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { resolveAudio } from './upstream.mjs';
@@ -157,7 +164,7 @@ async function probeFile(file) {
   }
 }
 
-async function fetchCover(coverUrl, destination, jobDir) {
+async function fetchCover(coverUrl, jobDir) {
   const url = assertCoverUrl(coverUrl);
   const response = await fetch(url, {
     headers: requestHeaders(coverUrl),
@@ -251,55 +258,106 @@ async function transcode({ sourcePath, outputPath, sourceFormat, outputFormat, b
   }
 }
 
-export async function probeSource(input) {
-  const resolved = await resolveAudio(input);
-  const url = assertAudioUrl(resolved.url);
-  const expected = input.expectedDurationSeconds || resolved.duration || 0;
-  const bitrate = Number(input.bitrate) || 0;
-  const estimatedBytes = expected > 0 && bitrate > 0 ? expected * bitrate * 125 : 0;
+async function readPrefix(response, maxBytes = 65_536) {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
 
-  let response;
   try {
-    response = await fetch(url, {
-      method: 'HEAD',
-      headers: requestHeaders(resolved.url),
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    response = null;
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const remaining = maxBytes - received;
+      const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      chunks.push(Buffer.from(slice));
+      received += slice.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
   }
 
-  if (!response || response.status === 405 || response.status === 403) {
+  return Buffer.concat(chunks);
+}
+
+async function fetchAudioPrefix(url, maxBytes = 65_536) {
+  let response = null;
+  for (const range of [null, `bytes=0-${maxBytes - 1}`]) {
     try {
       response = await fetch(url, {
         method: 'GET',
-        headers: { ...requestHeaders(resolved.url), Range: 'bytes=0-0' },
+        headers: {
+          ...requestHeaders(url),
+          ...(range ? { Range: range } : {}),
+        },
         redirect: 'follow',
         signal: AbortSignal.timeout(15_000),
       });
+      if (response.ok || response.status === 206) break;
       await response.body?.cancel().catch(() => {});
+      response = null;
     } catch {
       response = null;
     }
   }
 
-  const contentLengthHeader = response?.headers.get('content-length');
-  const contentRange = response?.headers.get('content-range');
-  const rangeTotal = contentRange?.match(/\/(\d+)$/)?.[1];
-  const contentLength = Number(rangeTotal ?? contentLengthHeader ?? 0) || 0;
-  const contentType = (response?.headers.get('content-type') ?? '').split(';')[0].trim();
-  const likelyPreview =
-    expected > 60 && contentLength > 0 && estimatedBytes > 0 && contentLength < estimatedBytes * 0.45;
+  if (!response) {
+    throw new UpstreamError('No se pudo comprobar el audio de la fuente.', 502);
+  }
+  return response;
+}
 
-  return {
-    available: Boolean(response?.ok),
-    sourceFormat: resolved.format,
-    contentType,
-    contentLength,
-    expectedDurationSeconds: expected,
-    likelyPreview,
-  };
+export async function probeSource(input) {
+  let lastResult = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const resolved = await resolveAudio(input);
+    const url = assertAudioUrl(resolved.url);
+    const expected = input.expectedDurationSeconds || resolved.duration || 0;
+    const bitrate = Number(input.bitrate) || 0;
+    const response = await fetchAudioPrefix(url);
+    const contentRange = response.headers.get('content-range');
+    const rangeTotal = contentRange?.match(/\/(\d+)$/)?.[1];
+    const contentLength = Number(rangeTotal ?? response.headers.get('content-length') ?? 0) || 0;
+    const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
+    const prefix = await readPrefix(response);
+    const sniffedFormat = sniffAudioFormat(prefix);
+    const declaredFormat = codecToAudioFormat({ codec: resolved.format });
+    const actualFormat = sniffedFormat === 'unknown' ? declaredFormat : sniffedFormat;
+    const observedKbps = observedBitrateKbps(contentLength, expected);
+    const actualBitrate = Math.round(observedKbps) || bitrate;
+    const likelyPreview =
+      expected > 60 &&
+      contentLength > 0 &&
+      (actualFormat === 'flac'
+        ? observedKbps < 400
+        : actualFormat !== 'unknown' && observedKbps < 64);
+
+    lastResult = {
+      available: true,
+      sourceFormat: actualFormat,
+      actualFormat,
+      actualBitrate,
+      formatMismatch:
+        actualFormat !== 'unknown' &&
+        actualFormat !== input.format &&
+        !(input.format === 'mp3' && actualFormat === 'flac'),
+      contentType,
+      contentLength,
+      expectedDurationSeconds: expected,
+      likelyPreview,
+    };
+
+    const acceptable =
+      actualFormat === input.format ||
+      actualFormat === 'unknown' ||
+      (input.format === 'mp3' && actualFormat === 'flac');
+    if (acceptable || attempt === 2) return lastResult;
+    await sleep(250);
+  }
+
+  return lastResult;
 }
 
 export async function checkQualities(input) {
@@ -321,6 +379,9 @@ export async function checkQualities(input) {
         ...quality,
         available: false,
         sourceFormat: quality.format,
+        actualFormat: 'unknown',
+        actualBitrate: 0,
+        formatMismatch: false,
         contentType: '',
         contentLength: 0,
         expectedDurationSeconds: input.expectedDurationSeconds,
@@ -331,9 +392,21 @@ export async function checkQualities(input) {
     if (checks.length < input.qualities.length) await sleep(150);
   }
 
-  const rank = (item) => (item.format === 'flac' ? 100_000 : 0) + (Number(item.bitrate) || 0);
+  const rank = (item) => {
+    const format = item.actualFormat ?? item.format;
+    const bitrate = Number(item.actualBitrate || item.bitrate) || 0;
+    if (format === 'flac') return 100_000 + bitrate;
+    if (format === 'mp3') return bitrate;
+    return 0;
+  };
   const full = checks
-    .filter((item) => item.available && !item.likelyPreview)
+    .filter(
+      (item) =>
+        item.available &&
+        !item.likelyPreview &&
+        !item.formatMismatch &&
+        (item.actualFormat ?? item.format) === item.format,
+    )
     .sort((a, b) => rank(b) - rank(a));
   const recommended = full[0] ?? null;
 
@@ -351,8 +424,10 @@ export async function downloadAndPrepare(input, jobDir) {
   let resolved = null;
   let transfer = null;
   let actual = 0;
+  let actualFormat = 'unknown';
+  let sourceProbe = null;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       resolved = await resolveAudio(input);
       const sourceUrl = assertAudioUrl(resolved.url);
@@ -365,6 +440,32 @@ export async function downloadAndPrepare(input, jobDir) {
       const probe = await probeFile(sourcePath);
       const expected = input.expectedDurationSeconds || resolved.duration || 0;
       actual = probe.duration;
+      sourceProbe = probe;
+      actualFormat = codecToAudioFormat(probe);
+
+      if (actualFormat === 'unknown') {
+        throw new HttpError(
+          502,
+          'UNKNOWN_AUDIO_FORMAT',
+          'No se pudo identificar el formato real del audio descargado. No se entrega para evitar un formato falso.',
+        );
+      }
+
+      if (input.outputFormat === 'flac' && actualFormat !== 'flac') {
+        const actualBitrate = probe.bitRate ? Math.round(probe.bitRate / 1000) : 0;
+        throw new HttpError(
+          422,
+          'SOURCE_FORMAT_MISMATCH',
+          `La fuente entrega ${audioFormatLabel(actualFormat)}${actualBitrate ? ` ${actualBitrate} kb/s` : ''} en lugar de FLAC. No se convierte a FLAC para no simular audio sin pérdida.`,
+          {
+            actualFormat,
+            actualBitrate,
+            requestedFormat: input.outputFormat,
+            contentLength: transfer.contentLength,
+            codec: probe.codec,
+          },
+        );
+      }
 
       if (expected > 0 && actual > 0) {
         const short = actual <= 45 && expected > 60;
@@ -385,8 +486,11 @@ export async function downloadAndPrepare(input, jobDir) {
     } catch (error) {
       const retryable =
         error instanceof PreviewOnlyError ||
+        (error instanceof HttpError &&
+          error.code === 'SOURCE_FORMAT_MISMATCH' &&
+          input.outputFormat === 'flac') ||
         (error instanceof UpstreamError && (error.status === 502 || error.status === 504));
-      if (!retryable || attempt === 1) throw error;
+      if (!retryable || attempt === 2) throw error;
       await fs.rm(sourcePath, { force: true });
       await sleep(600);
     }
@@ -396,7 +500,7 @@ export async function downloadAndPrepare(input, jobDir) {
     throw new UpstreamError('No se pudo obtener el audio de la fuente.', 502);
   }
 
-  const sourceFormat = resolved.format === 'flac' ? 'flac' : 'mp3';
+  const sourceFormat = actualFormat;
   const outputFormat = input.outputFormat;
   const needsConversion = sourceFormat !== outputFormat;
   const wantsCover = input.embedMetadata && Boolean(input.coverUrl);
@@ -433,6 +537,21 @@ export async function downloadAndPrepare(input, jobDir) {
     });
   }
 
+  const finalProbe = await probeFile(outputPath);
+  const finalFormat = codecToAudioFormat(finalProbe);
+  if (finalFormat !== outputFormat) {
+    throw new HttpError(
+      502,
+      'OUTPUT_FORMAT_MISMATCH',
+      `El archivo preparado no es ${audioFormatLabel(outputFormat)} real. No se entrega para evitar un formato falso.`,
+      {
+        expected: outputFormat,
+        actual: finalFormat,
+        codec: finalProbe.codec,
+      },
+    );
+  }
+
   const stats = await fs.stat(outputPath);
   if (!stats.size) {
     throw new HttpError(502, 'EMPTY_FILE', 'El archivo preparado quedó vacío. Prueba otra calidad.');
@@ -449,8 +568,12 @@ export async function downloadAndPrepare(input, jobDir) {
     size: stats.size,
     actualDuration: actual,
     sourceFormat,
+    sourceCodec: sourceProbe?.codec ?? '',
+    actualBitrate: Math.round((finalProbe.bitRate || sourceProbe?.bitRate || 0) / 1000),
+    requestedFormat: input.format,
     outputFormat,
     converted: needsConversion,
     hasCover: Boolean(coverPath),
+    verified: true,
   };
 }

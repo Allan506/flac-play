@@ -223,8 +223,12 @@ api.post(
         `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
       );
       res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-FLACPlay-Requested-Format', result.requestedFormat);
       res.setHeader('X-FLACPlay-Output-Format', result.outputFormat);
       res.setHeader('X-FLACPlay-Source-Format', result.sourceFormat);
+      res.setHeader('X-FLACPlay-Source-Codec', result.sourceCodec);
+      res.setHeader('X-FLACPlay-Actual-Bitrate', String(result.actualBitrate));
+      res.setHeader('X-FLACPlay-Verified', result.verified ? '1' : '0');
       res.setHeader('X-FLACPlay-Actual-Duration', String(Math.round(result.actualDuration)));
       res.setHeader('X-FLACPlay-Converted', result.converted ? '1' : '0');
       res.setHeader('X-FLACPlay-Cover', result.hasCover ? '1' : '0');
