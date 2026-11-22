@@ -14,7 +14,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY server ./server
+COPY scripts ./scripts
 RUN chown -R node:node /app && mkdir -p /tmp/flacplay && chown -R node:node /tmp/flacplay
 USER node
 EXPOSE 12000
-CMD ["node", "server/index.mjs"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:12000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+STOPSIGNAL SIGTERM
+CMD ["bash", "scripts/serve-prod.sh"]

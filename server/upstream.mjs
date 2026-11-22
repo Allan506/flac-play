@@ -9,6 +9,12 @@ import {
   toSeconds,
 } from './utils.mjs';
 
+function logUpstream(event, path, payload, status) {
+  console.warn(
+    `[${new Date().toISOString()}] upstream_${event} path=${path} status=${status} payload=${JSON.stringify(payload).slice(0, 500)}`,
+  );
+}
+
 function upstreamNotFoundMessage(path) {
   if (path.includes('/album')) {
     return 'La fuente no encontró ese álbum. Vuelve a buscar la pista o abre la ficha original.';
@@ -42,9 +48,11 @@ async function requestOnce(path, payload, timeoutMs) {
     } catch {
       if (!response.ok) {
         if (response.status === 404) {
+          logUpstream('not_found', path, payload, response.status);
           throw new UpstreamError(upstreamNotFoundMessage(path), 502);
         }
         if (response.status === 429) {
+          logUpstream('rate_limited', path, payload, response.status);
           throw new UpstreamError(
             'La fuente está limitando las solicitudes. Espera unos segundos y vuelve a intentarlo.',
             503,
@@ -60,9 +68,11 @@ async function requestOnce(path, payload, timeoutMs) {
 
     if (!response.ok) {
       if (response.status === 404) {
+        logUpstream('not_found', path, payload, response.status);
         throw new UpstreamError(upstreamNotFoundMessage(path), 502);
       }
       if (response.status === 429) {
+        logUpstream('rate_limited', path, payload, response.status);
         throw new UpstreamError(
           'La fuente está limitando las solicitudes. Espera unos segundos y vuelve a intentarlo.',
           503,
