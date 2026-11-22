@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, checkQualities, downloadTrack, readApiError } from '../api';
-import type { Platform, Quality, QualityCheck, Track } from '../types';
+import type {
+  ActualAudioFormat,
+  AudioFormat,
+  Platform,
+  Quality,
+  QualityCheck,
+  Track,
+} from '../types';
 import {
   formatBytes,
   formatDuration,
@@ -31,7 +38,15 @@ interface Progress {
   total: number;
 }
 
-type CheckStatus = 'checking' | 'full' | 'preview' | 'unavailable' | 'unknown';
+type CheckStatus = 'checking' | 'full' | 'preview' | 'unavailable' | 'mismatch' | 'unknown';
+
+function actualFormatLabel(format: ActualAudioFormat | undefined): string {
+  if (format === 'flac') return 'FLAC';
+  if (format === 'mp3') return 'MP3';
+  if (format === 'm4a') return 'M4A/AAC';
+  if (format === 'ogg') return 'OGG';
+  return 'formato desconocido';
+}
 
 function parseFilename(disposition: string | null, fallback: string): string {
   if (!disposition) return fallback;
@@ -50,8 +65,9 @@ function parseFilename(disposition: string | null, fallback: string): string {
 function checkStatus(check: QualityCheck | null, checking: boolean): CheckStatus {
   if (check) {
     if (check.likelyPreview) return 'preview';
-    if (check.available) return 'full';
-    return 'unavailable';
+    if (!check.available) return 'unavailable';
+    if (check.formatMismatch && check.actualFormat !== 'flac') return 'mismatch';
+    return 'full';
   }
   return checking ? 'checking' : 'unknown';
 }
@@ -61,6 +77,7 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
   full: 'Completa',
   preview: 'Posible vista previa',
   unavailable: 'No disponible',
+  mismatch: 'Formato distinto',
   unknown: 'Sin comprobar',
 };
 
@@ -74,11 +91,16 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState('');
   const [embedMetadata, setEmbedMetadata] = useState(true);
-  const [highResCover, setHighResCover] = useState(true);
+  const [embedCover, setEmbedCover] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<Progress>({ received: 0, total: 0 });
   const [error, setError] = useState('');
   const [previewRejected, setPreviewRejected] = useState(false);
+  const [formatMismatch, setFormatMismatch] = useState<{
+    actualFormat: ActualAudioFormat;
+    actualBitrate: number;
+    requestedFormat: AudioFormat;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const userPickedRef = useRef(false);
 
@@ -95,10 +117,38 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
   const selectedUnavailable = status === 'unavailable';
   const selectedPreview = status === 'preview';
   const allUnavailable = checks.length > 0 && checks.every((check) => !check.available);
+  const selectedMismatchCheck =
+    selectedCheck?.formatMismatch && selectedCheck.actualFormat !== 'flac' ? selectedCheck : null;
+  const advisoryMismatch = Boolean(selectedMismatchCheck);
+  const confirmedMismatch = Boolean(formatMismatch && formatMismatch.actualFormat !== 'flac');
+  const showMismatch = advisoryMismatch || confirmedMismatch;
+  const mismatchActual: ActualAudioFormat =
+    (confirmedMismatch ? formatMismatch?.actualFormat : selectedMismatchCheck?.actualFormat) ??
+    'mp3';
+  const mismatchBitrate =
+    (confirmedMismatch ? formatMismatch?.actualBitrate : selectedMismatchCheck?.actualBitrate) ||
+    320;
+  const actualOutputFormat: AudioFormat | null = quality
+    ? confirmedMismatch
+      ? 'mp3'
+      : quality.format
+    : null;
+  const outputQuality: Quality | null =
+    quality && actualOutputFormat
+      ? {
+          ...quality,
+          format: actualOutputFormat,
+          bitrate:
+            actualOutputFormat === 'mp3' && confirmedMismatch
+              ? String(mismatchBitrate || 320)
+              : quality.bitrate,
+        }
+      : null;
   const fullAlternativeIndex = checks.findIndex(
     (check) =>
       check.available &&
       !check.likelyPreview &&
+      !check.formatMismatch &&
       !(check.format === quality?.format && check.bitrate === quality?.bitrate),
   );
   const fullAlternative = fullAlternativeIndex >= 0 ? qualities[fullAlternativeIndex] : null;
@@ -113,9 +163,10 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
     setRecommended(null);
     setCheckError('');
     setEmbedMetadata(true);
-    setHighResCover(Boolean(track.pic_url));
+    setEmbedCover(Boolean(track.pic_url));
     setError('');
     setPreviewRejected(false);
+    setFormatMismatch(null);
     setProgress({ received: 0, total: 0 });
     setDownloading(false);
     abortRef.current?.abort();
@@ -182,10 +233,12 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
     setSelectedIndex(index);
     setError('');
     setPreviewRejected(false);
+    setFormatMismatch(null);
   };
 
-  const startDownload = async () => {
+  const startDownload = async (overrideOutput?: AudioFormat) => {
     if (!quality || downloading || selectedUnavailable) return;
+    const outputFormat = overrideOutput ?? actualOutputFormat ?? quality.format;
     const controller = new AbortController();
     abortRef.current = controller;
     setDownloading(true);
@@ -197,7 +250,12 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       const response = await downloadTrack(
         track,
         platform,
-        { quality, embedMetadata, highResolutionCover: highResCover && hasCover },
+        {
+          quality,
+          outputFormat,
+          embedMetadata,
+          embedCover: embedCover && hasCover,
+        },
         controller.signal,
       );
 
@@ -207,9 +265,13 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
 
       const total = Number(response.headers.get('content-length')) || 0;
       const contentType = response.headers.get('content-type') || 'application/octet-stream';
+      const deliveredFormat = (response.headers.get('x-flacplay-output-format') ??
+        outputFormat) as AudioFormat;
+      const verified = response.headers.get('x-flacplay-verified') === '1';
+      const coverResolution = response.headers.get('x-flacplay-cover-resolution') ?? '';
       const filename = parseFilename(
         response.headers.get('content-disposition'),
-        `${safeFilename(`${track.artist} - ${track.name}`)}.${quality.format}`,
+        `${safeFilename(`${track.artist} - ${track.name}`)}.${deliveredFormat}`,
       );
 
       if (!response.body) {
@@ -241,10 +303,39 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
       setProgress({ received, total: total || received });
-      onToast('Archivo preparado. Revisa la carpeta de descargas del navegador.', 'success');
+      const coverNote = coverResolution ? ` · portada ${coverResolution}` : '';
+      onToast(
+        verified
+          ? `Archivo ${deliveredFormat.toUpperCase()} real verificado y descargado${coverNote}.`
+          : `Archivo ${deliveredFormat.toUpperCase()} descargado${coverNote}.`,
+        'success',
+      );
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         setError('Descarga detenida. No se guardó ningún archivo parcial.');
+      } else if (caught instanceof ApiError && caught.code === 'SOURCE_FORMAT_MISMATCH') {
+        const actualFormat = String(
+          caught.details?.actualFormat ?? 'mp3',
+        ) as ActualAudioFormat;
+        const actualBitrate = Number(caught.details?.actualBitrate) || 0;
+        setFormatMismatch({
+          actualFormat,
+          actualBitrate,
+          requestedFormat: quality.format,
+        });
+        setChecks((previous) =>
+          previous.map((check) =>
+            check.format === quality.format && check.bitrate === quality.bitrate
+              ? {
+                  ...check,
+                  formatMismatch: true,
+                  actualFormat,
+                  actualBitrate,
+                }
+              : check,
+          ),
+        );
+        setError(caught.message);
       } else if (caught instanceof ApiError && caught.code === 'PREVIEW_ONLY') {
         setPreviewRejected(true);
         setError(caught.message);
@@ -304,8 +395,16 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       footer={
         <div className="modal-footer-row">
           <span className="modal-footer-note">
-            {quality
-              ? `Salida ${formatQuality(quality)}${selectedPreview ? ' · comprobación orientativa' : ''}`
+            {outputQuality
+              ? `Salida ${formatQuality(outputQuality)}${
+                  confirmedMismatch
+                    ? ' · formato real confirmado'
+                    : advisoryMismatch
+                      ? ` · la muestra puede ser ${actualFormatLabel(mismatchActual)}`
+                      : selectedPreview
+                        ? ' · comprobación orientativa'
+                        : ''
+                }`
               : 'La fuente no publicó calidades compatibles.'}
           </span>
           <div className="modal-footer-actions">
@@ -319,7 +418,13 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
               disabled={downloading || !quality || selectedUnavailable}
             >
               {downloading ? <LoaderIcon size={16} /> : <DownloadIcon size={16} />}
-              {downloading ? 'Preparando…' : selectedPreview ? 'Intentar descarga' : 'Descargar'}
+              {downloading
+                ? 'Preparando…'
+                : confirmedMismatch
+                  ? 'Descargar MP3 real'
+                  : selectedPreview
+                    ? 'Intentar descarga'
+                    : 'Descargar'}
             </button>
           </div>
         </div>
@@ -362,7 +467,9 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
                     {item.size ? ` · ${item.size}` : ''}
                   </span>
                   <span className={`quality-status quality-status-${itemStatus}`}>
-                    {STATUS_LABEL[itemStatus]}
+                    {itemStatus === 'mismatch' && check
+                      ? `Muestra ${actualFormatLabel(check.actualFormat)}`
+                      : STATUS_LABEL[itemStatus]}
                   </span>
                   {recommendedMatches(item) ? (
                     <span className="quality-recommended">Recomendada</span>
@@ -396,6 +503,34 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
               <span>{checkError} Puedes intentar la descarga; la cabina verificará el archivo.</span>
             </div>
           </>
+        ) : showMismatch ? (
+          <>
+            <AlertIcon size={16} />
+            <div>
+              <strong>
+                {confirmedMismatch ? 'La fuente confirmó' : 'La muestra de la fuente es'}{' '}
+                {actualFormatLabel(mismatchActual)}
+                {mismatchBitrate ? ` ${mismatchBitrate} kb/s` : ''} en lugar de{' '}
+                {quality?.format === 'flac' ? 'FLAC' : 'MP3'}.
+              </strong>
+              <span>
+                {selectedPreview ? 'Además, el tamaño sugiere una vista previa. ' : ''}
+                {confirmedMismatch
+                  ? 'No se renombró a FLAC. Puedes descargar el MP3 real; la duración y el códec ya se verificaron con ffprobe.'
+                  : quality?.format === 'flac'
+                    ? 'La descarga se reintentará y solo se guardará como FLAC si el archivo real es FLAC. Si la fuente insiste en MP3, no se etiquetará como FLAC.'
+                    : 'La descarga convertirá esta muestra a MP3 real; el archivo final se verificará con ffprobe.'}
+              </span>
+              <button
+                type="button"
+                className="probe-action"
+                onClick={() => void startDownload(confirmedMismatch ? 'mp3' : undefined)}
+              >
+                {confirmedMismatch ? 'Descargar MP3 real' : 'Descargar y verificar'}{' '}
+                <DownloadIcon size={12} />
+              </button>
+            </div>
+          </>
         ) : selectedPreview ? (
           <>
             <AlertIcon size={16} />
@@ -408,7 +543,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
               <span>
                 {previewRejected
                   ? `Sólo se recibieron ${formatBytes(selectedCheck?.contentLength ?? 0)} para una pista de ${formatDuration(track.duration)}. No se guardó ningún archivo parcial.`
-                  : `La fuente declara ${formatBytes(selectedCheck?.contentLength ?? 0)} frente a los ${formatBytes(expectedBytes)} esperados. Puedes intentarlo: la cabina mide la duración real y no guardará un archivo incompleto.`}
+                  : `La fuente entrega ${actualFormatLabel(selectedCheck?.actualFormat)} y declara ${formatBytes(selectedCheck?.contentLength ?? 0)} frente a los ${formatBytes(expectedBytes)} esperados. Puedes intentarlo: la cabina mide la duración real y no guardará un archivo incompleto.`}
               </span>
               {fullAlternative && fullAlternativeIndex >= 0 ? (
                 <button
@@ -437,10 +572,13 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
           <>
             <CheckIcon size={16} />
             <div>
-              <strong>La fuente declara una pista completa.</strong>
+              <strong>
+                La fuente entrega {actualFormatLabel(selectedCheck?.actualFormat)} real.
+              </strong>
               <span>
-                {formatBytes(selectedCheck?.contentLength ?? 0)} para esta calidad. La duración se
-                verifica de nuevo al preparar el archivo.
+                {formatBytes(selectedCheck?.contentLength ?? 0)} para esta calidad. El formato se
+                detectó en los primeros 64 KB y la duración se verifica de nuevo al preparar el
+                archivo.
               </span>
             </div>
           </>
@@ -468,15 +606,15 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         <label className={`toggle-row ${!embedMetadata || !hasCover ? 'is-disabled' : ''}`}>
           <input
             type="checkbox"
-            checked={embedMetadata && highResCover && hasCover}
-            onChange={(event) => setHighResCover(event.target.checked)}
+            checked={embedMetadata && embedCover && hasCover}
+            onChange={(event) => setEmbedCover(event.target.checked)}
             disabled={downloading || !embedMetadata || !hasCover}
           />
           <span className="toggle-copy">
-            <strong>Incrustar portada</strong>
+            <strong>Incrustar portada en máxima resolución</strong>
             <small>
               {hasCover
-                ? 'Se usa la portada publicada por la fuente.'
+                ? 'Se descarga la portada original y se incrusta en el archivo.'
                 : 'La fuente no publicó una portada para esta pista.'}
             </small>
           </span>

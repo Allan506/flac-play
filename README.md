@@ -2,7 +2,7 @@
 
 Buscador y reproductor de música con interfaz en español para los catálogos de **Kuwo** y **NetEase**. Permite buscar, escuchar, leer la letra, consultar el álbum y preparar descargas en FLAC o MP3.
 
-El proyecto incluye un frontend React/Vite y un servidor Express que actúa como proxy de la API de origen, resuelve las URLs de audio, comprueba la duración real con `ffprobe` y prepara el archivo final con `ffmpeg`.
+El proyecto incluye un frontend React/Vite y un servidor Express que actúa como proxy de la API de origen, resuelve las URLs de audio, comprueba el formato real y la duración con `ffprobe` y prepara el archivo final con `ffmpeg`. Si la fuente etiqueta una calidad como FLAC pero entrega MP3, el archivo nunca se renombra: se rechaza o se descarga como MP3 real.
 
 ## Requisitos
 
@@ -90,7 +90,10 @@ Todas las respuestas correctas usan `{ "data": ... }`. Los errores usan `{ "erro
       "format": "flac",
       "bitrate": "948",
       "available": true,
-      "sourceFormat": "flac",
+      "sourceFormat": "mp3",
+      "actualFormat": "mp3",
+      "actualBitrate": 128,
+      "formatMismatch": true,
       "contentType": "audio/mpeg",
       "contentLength": 481115,
       "expectedDurationSeconds": 294,
@@ -103,7 +106,7 @@ Todas las respuestas correctas usan `{ "data": ... }`. Los errores usan `{ "erro
 }
 ```
 
-La comprobación es **orientativa**: algunos servidores declaran un tamaño completo en `HEAD` y luego entregan una vista previa en `GET`. Por eso la decisión definitiva se toma al descargar: `ffprobe` mide la duración real y, si es una vista previa, el servidor responde `422 PREVIEW_ONLY` sin guardar un archivo parcial. La interfaz muestra ese resultado y ofrece la mejor alternativa disponible.
+La comprobación es **orientativa**: el servidor lee los primeros 64 KB, detecta el formato real por sus bytes y reintenta la resolución hasta tres veces si la calidad pedida no coincide. Aun así, algunos servidores entregan variantes distintas entre peticiones. Por eso la decisión definitiva se toma al descargar: `ffprobe` identifica el códec real y mide la duración. Si es una vista previa, el servidor responde `422 PREVIEW_ONLY`; si se pidió FLAC y el archivo real es MP3, responde `422 SOURCE_FORMAT_MISMATCH`. En ningún caso se guarda un archivo parcial ni se cambia la extensión para simular un formato.
 
 ### Descarga
 
@@ -111,10 +114,14 @@ La comprobación es **orientativa**: algunos servidores declaran un tamaño comp
 
 1. Resuelve la URL de audio.
 2. Descarga a un directorio temporal con límite de tamaño.
-3. Verifica la duración real con `ffprobe`.
-4. Si detecta una vista previa, reintenta una vez con una resolución nueva y, si vuelve a fallar, responde `422`.
-5. Convierte o incrusta metadatos y portada con `ffmpeg` cuando hace falta.
-6. Entrega el archivo y elimina el directorio temporal.
+3. Identifica el códec real y la duración con `ffprobe`.
+4. Si se pidió FLAC y el archivo real no es FLAC, reintenta hasta tres veces con una resolución nueva. Si sigue sin ser FLAC, responde `422 SOURCE_FORMAT_MISMATCH` con el formato real detectado; nunca convierte MP3 a FLAC para simular pérdida cero.
+5. Si detecta una vista previa, reintenta y, si vuelve a fallar, responde `422 PREVIEW_ONLY`.
+6. Convierte a MP3 cuando se pide MP3, o incrusta metadatos y portada con `ffmpeg` cuando hace falta. La portada se pide en su resolución máxima: 1200 px en Kuwo (con 500, 300 y el tamaño original como alternativas) y la imagen original en NetEase.
+7. Verifica de nuevo el códec del archivo final con `ffprobe`. Si no coincide con `outputFormat`, responde `502 OUTPUT_FORMAT_MISMATCH`.
+8. Entrega el archivo con la extensión y el `Content-Type` reales, y elimina el directorio temporal.
+
+La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate`, `X-FLACPlay-Verified`, `X-FLACPlay-Cover` y, cuando hay portada, `X-FLACPlay-Cover-Resolution` (por ejemplo `1200x1200`).
 
 ## Pruebas
 
@@ -122,7 +129,7 @@ La comprobación es **orientativa**: algunos servidores declaran un tamaño comp
 npm test
 ```
 
-Cubren el formato de duraciones y tamaños, el parser LRC y los filtros de búsqueda.
+Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, y la selección de portadas en máxima resolución.
 
 ## Limitaciones conocidas
 

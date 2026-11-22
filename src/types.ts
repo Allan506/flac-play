@@ -2,6 +2,8 @@ export type Platform = 'kuwo' | 'wyy';
 
 export type AudioFormat = 'mp3' | 'flac';
 
+export type ActualAudioFormat = AudioFormat | 'm4a' | 'ogg' | 'unknown';
+
 export interface Quality {
   level: string;
   bitrate: string;
@@ -61,7 +63,10 @@ export interface ResolvedAudio {
 
 export interface ProbeResult {
   available: boolean;
-  sourceFormat: AudioFormat;
+  sourceFormat: ActualAudioFormat;
+  actualFormat: ActualAudioFormat;
+  actualBitrate: number;
+  formatMismatch: boolean;
   contentType: string;
   contentLength: number;
   expectedDurationSeconds: number;
@@ -70,7 +75,10 @@ export interface ProbeResult {
 
 export interface QualityCheck extends Quality {
   available: boolean;
-  sourceFormat: AudioFormat;
+  sourceFormat: ActualAudioFormat;
+  actualFormat: ActualAudioFormat;
+  actualBitrate: number;
+  formatMismatch: boolean;
   contentType: string;
   contentLength: number;
   expectedDurationSeconds: number;
@@ -128,8 +136,9 @@ export interface ParsedLyrics {
 
 export interface DownloadOptions {
   quality: Quality;
+  outputFormat?: AudioFormat;
   embedMetadata: boolean;
-  highResolutionCover: boolean;
+  embedCover: boolean;
 }
 
 export interface PlayerTrack {

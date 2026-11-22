@@ -167,7 +167,7 @@ export function downloadTrack(
       platform,
       songid: track.id,
       format: options.quality.format,
-      outputFormat: options.quality.format,
+      outputFormat: options.outputFormat ?? options.quality.format,
       bitrate: options.quality.bitrate,
       time: track.time,
       sign: track.sign,
@@ -177,7 +177,7 @@ export function downloadTrack(
       coverUrl: track.pic_url,
       expectedDurationSeconds: track.duration,
       embedMetadata: options.embedMetadata,
-      highResolutionCover: options.highResolutionCover,
+      embedCover: options.embedCover,
     }),
   });
 }
