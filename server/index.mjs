@@ -2,6 +2,7 @@ import compression from 'compression';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
@@ -29,11 +30,18 @@ import {
 } from './validation.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const version = packageJson.version ?? '2.0.1';
 const distDir = path.join(here, '..', 'dist');
 const app = express();
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  req.requestId = randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
 
 app.use(
   helmet({
@@ -110,7 +118,7 @@ api.use(apiLimiter);
 api.get('/config', (_req, res) => {
   res.json({
     data: {
-      version: '2.0.0',
+      version,
       catalogs: [
         { value: 'kuwo', name: 'Kuwo', initial: 'K' },
         { value: 'wyy', name: 'NetEase', initial: 'W' },
@@ -126,7 +134,9 @@ api.get('/health', (_req, res) => {
   res.json({
     data: {
       status: 'ok',
-      version: '2.0.0',
+      version,
+      pid: process.pid,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
       uptimeSeconds: Math.round(process.uptime()),
       upstream: config.upstreamApi,
     },
@@ -247,7 +257,10 @@ api.post(
   }),
 );
 
-api.use((_req, res) => {
+api.use((req, res) => {
+  console.warn(
+    `[${new Date().toISOString()}] api_not_found method=${req.method} path=${req.originalUrl} request=${req.requestId}`,
+  );
   res.status(404).json({
     error: { code: 'NOT_FOUND', message: 'Ese recurso de la API no existe.' },
   });
@@ -271,14 +284,27 @@ if (fs.existsSync(distDir)) {
 
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(distDir, 'index.html'));
+    if (req.path.startsWith('/assets/')) {
+      console.warn(
+        `[${new Date().toISOString()}] asset_not_found path=${req.originalUrl} request=${req.requestId}`,
+      );
+      res.status(404).type('text/plain').send('Asset no encontrado');
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(distDir, 'index.html'), {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
   });
 }
 
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
   const publicError = toPublicError(error);
   if (publicError.status >= 500) {
-    console.error(error);
+    console.error(
+      `[${new Date().toISOString()}] request_failed status=${publicError.status} method=${req.method} path=${req.originalUrl} request=${req.requestId}`,
+      error,
+    );
   }
   if (res.headersSent) {
     res.destroy();
@@ -288,14 +314,31 @@ app.use((error, _req, res, _next) => {
 });
 
 const server = app.listen(config.port, config.host, () => {
-  console.log(`FLAC Play API en http://${config.host}:${config.port} (${config.env})`);
+  console.log(
+    `[${new Date().toISOString()}] FLAC Play API v${version} en http://${config.host}:${config.port} (${config.env})`,
+  );
   if (!fs.existsSync(distDir)) {
     console.log('Aviso: dist/ no existe. Usa `npm run dev` o ejecuta `npm run build` antes de `npm start`.');
   }
 });
 
+server.on('error', (error) => {
+  console.error(`[${new Date().toISOString()}] server_error`, error);
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 100).unref();
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(`[${new Date().toISOString()}] unhandled_rejection`, reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error(`[${new Date().toISOString()}] uncaught_exception`, error);
+  setTimeout(() => process.exit(1), 100).unref();
+});
+
 function shutdown(signal) {
-  console.log(`${signal} recibido. Cerrando FLAC Play…`);
+  console.log(`[${new Date().toISOString()}] ${signal} recibido. Cerrando FLAC Play…`);
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 8_000).unref();
 }

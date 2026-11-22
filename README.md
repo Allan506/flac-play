@@ -28,14 +28,37 @@ npm start
 
 El servidor sirve `dist/` y la API en el mismo puerto (`12000` por defecto).
 
+Para producción con recuperación automática:
+
+```bash
+npm run build
+npm run start:supervised
+```
+
+El supervisor reinicia el servidor si termina inesperadamente y lo reinicia si `/api/health` falla tres veces seguidas. Si el contenedor completo se reinicia, el orquestador debe arrancar el servicio; usa Docker Compose o el mecanismo de arranque de tu plataforma.
+
 ### Docker
 
 ```bash
+docker compose up -d --build
+```
+
+El `docker-compose.yml` incluye `restart: unless-stopped` y un `healthcheck` contra `/api/health`. También puedes construir manualmente:
+
+```bash
 docker build -t flac-play .
-docker run --rm -p 12000:12000 flac-play
+docker run --restart unless-stopped -p 12000:12000 flac-play
 ```
 
 La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tmp/flacplay`. Puedes cambiar el catálogo de origen con `-e UPSTREAM_API=https://...`.
+
+### Diagnóstico
+
+- Cada respuesta incluye `X-Request-Id`; los logs del servidor usan ese identificador.
+- Los 404 de la API se registran como `api_not_found` con método, ruta y request ID.
+- Los 404/429 de la fuente se registran como `upstream_not_found` / `upstream_rate_limited` con la ruta y el payload.
+- Los errores 5xx se registran como `request_failed`; los fallos no capturados se registran como `unhandled_rejection` o `uncaught_exception`.
+- Comprueba el estado con `curl http://127.0.0.1:12000/api/health`.
 
 ## Scripts
 
@@ -44,6 +67,7 @@ La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tm
 | `npm run dev` | Vite y API con recarga automática. |
 | `npm run build` | Comprueba tipos y genera `dist/`. |
 | `npm start` | Servidor de producción. |
+| `npm run start:supervised` | Servidor con supervisor y healthcheck. |
 | `npm test` | Pruebas unitarias con Vitest. |
 | `npm run typecheck` | TypeScript sin emitir archivos. |
 
@@ -140,9 +164,11 @@ Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqu
 ## Estructura
 
 ```
-server/        API Express, caché, validación, resolución y descarga
-src/           Frontend React, componentes, hooks y estilos
-tests/         Pruebas unitarias de Vitest
-public/        Recursos estáticos
-dist/          Build de producción
+server/            API Express, caché, validación, resolución y descarga
+src/               Frontend React, componentes, hooks y estilos
+tests/             Pruebas unitarias de Vitest
+scripts/           Supervisor de producción
+public/            Recursos estáticos
+dist/              Build de producción
+docker-compose.yml Despliegue con reinicio automático y healthcheck
 ```

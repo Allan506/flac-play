@@ -157,6 +157,8 @@ export default function App() {
       requestedQueryRef.current = query;
       setLoading(true);
       setError('');
+      setResults(null);
+      setSubmittedKeyword(query);
       setPlatform(nextPlatform);
       setKeyword(query);
 
