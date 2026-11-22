@@ -9,6 +9,16 @@ import {
   toSeconds,
 } from './utils.mjs';
 
+function upstreamNotFoundMessage(path) {
+  if (path.includes('/album')) {
+    return 'La fuente no encontró ese álbum. Vuelve a buscar la pista o abre la ficha original.';
+  }
+  if (path.includes('/search')) {
+    return 'La fuente no encontró resultados para esta búsqueda. Inténtalo de nuevo o cambia de catálogo.';
+  }
+  return 'La fuente no encontró el recurso solicitado. Inténtalo de nuevo.';
+}
+
 async function requestOnce(path, payload, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -30,10 +40,34 @@ async function requestOnce(path, payload, timeoutMs) {
     try {
       body = text ? JSON.parse(text) : {};
     } catch {
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new UpstreamError(upstreamNotFoundMessage(path), 502);
+        }
+        if (response.status === 429) {
+          throw new UpstreamError(
+            'La fuente está limitando las solicitudes. Espera unos segundos y vuelve a intentarlo.',
+            503,
+          );
+        }
+        throw new UpstreamError(
+          `La fuente respondió HTTP ${response.status}.`,
+          response.status >= 500 ? 502 : response.status,
+        );
+      }
       throw new UpstreamError('La fuente devolvió una respuesta ilegible.', 502);
     }
 
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new UpstreamError(upstreamNotFoundMessage(path), 502);
+      }
+      if (response.status === 429) {
+        throw new UpstreamError(
+          'La fuente está limitando las solicitudes. Espera unos segundos y vuelve a intentarlo.',
+          503,
+        );
+      }
       const message =
         body?.message || body?.error?.message || `La fuente respondió HTTP ${response.status}.`;
       throw new UpstreamError(message, response.status >= 500 ? 502 : response.status);
@@ -62,7 +96,9 @@ async function requestUpstream(path, payload) {
       return await requestOnce(path, payload, config.upstreamTimeoutMs);
     } catch (error) {
       lastError = error;
-      const retryable = error instanceof UpstreamError && (error.status === 502 || error.status === 504);
+      const retryable =
+        error instanceof UpstreamError &&
+        (error.status === 502 || error.status === 503 || error.status === 504);
       if (!retryable || attempt === 1) break;
       await sleep(450 + attempt * 350);
     }

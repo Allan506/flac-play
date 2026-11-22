@@ -31,7 +31,7 @@ interface ResultsListProps {
   onGoSearch: () => void;
 }
 
-const SUGGESTIONS = ['周杰伦', 'Rosalía', 'Daft Punk', 'City Pop', 'FKA twigs'];
+const SUGGESTIONS = ['晴天', 'Rosalía', 'Daft Punk', 'City Pop', 'FKA twigs'];
 
 export function ResultsList({
   results,
@@ -59,7 +59,9 @@ export function ResultsList({
 }: ResultsListProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasResults = Boolean(results);
-  const isFilteredEmpty = hasResults && filtered.length === 0;
+  const hasTracks = Boolean(results?.list.length);
+  const isSourceEmpty = hasResults && !hasTracks;
+  const isFilteredEmpty = hasTracks && filtered.length === 0;
 
   return (
     <section className="results-column" id="catalog" aria-labelledby="results-title">
@@ -110,15 +112,27 @@ export function ResultsList({
         />
       ) : loading && !hasResults ? (
         <TrackSkeletonList count={6} />
+      ) : isSourceEmpty ? (
+        <div className="filter-empty" role="status">
+          <strong>La fuente no devolvió pistas para esta búsqueda.</strong>
+          <span>
+            {total > 0
+              ? `La fuente declara ${total.toLocaleString('es')} coincidencias, pero no entregó ninguna pista en esta página. Prueba con el nombre de una canción o cambia de catálogo.`
+              : 'Prueba con el nombre de una canción o combina artista y canción (por ejemplo, «Jay Chou 晴天»).'}
+          </span>
+          <button type="button" className="text-button" onClick={onGoSearch}>
+            Cambiar búsqueda
+          </button>
+        </div>
       ) : isFilteredEmpty ? (
         <div className="filter-empty" role="status">
-          <strong>No hay coincidencias en esta página.</strong>
+          <strong>No hay coincidencias con estos filtros.</strong>
           <span>Prueba a relajar los filtros o consulta otra página del catálogo.</span>
           <button type="button" className="text-button" onClick={onClearFilters}>
             Limpiar filtros
           </button>
         </div>
-      ) : hasResults ? (
+      ) : hasTracks ? (
         <>
           <div className="results-toolbar">
             <span>

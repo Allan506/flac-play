@@ -104,7 +104,18 @@ export function AlbumModal({
   );
 
   useEffect(() => {
-    if (!open || !albumId) return;
+    if (!open) return;
+    if (!albumId || albumId === '0') {
+      requestRef.current += 1;
+      setInfo(null);
+      setTracks([]);
+      setTotal(0);
+      setHasMore(false);
+      setLoading(false);
+      setLoadingMore(false);
+      setError('La fuente no publicó un álbum válido para esta pista.');
+      return;
+    }
     void loadPage(1, 'replace');
     return () => {
       requestRef.current += 1;

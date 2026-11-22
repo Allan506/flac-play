@@ -61,7 +61,7 @@ export const albumSchema = z.object({
   id: z
     .string({ required_error: 'Falta el álbum.' })
     .trim()
-    .regex(/^\d{1,32}$/, 'El álbum no es válido.'),
+    .regex(/^(?!0+$)\d{1,32}$/, 'El álbum no es válido.'),
   page: z.coerce.number().int().min(1).max(200).default(1),
   size: z.coerce.number().int().min(1).max(50).default(20),
 });

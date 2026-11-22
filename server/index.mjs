@@ -29,6 +29,8 @@ import {
 } from './validation.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const version = packageJson.version ?? '2.0.1';
 const distDir = path.join(here, '..', 'dist');
 const app = express();
 
@@ -110,7 +112,7 @@ api.use(apiLimiter);
 api.get('/config', (_req, res) => {
   res.json({
     data: {
-      version: '2.0.0',
+      version,
       catalogs: [
         { value: 'kuwo', name: 'Kuwo', initial: 'K' },
         { value: 'wyy', name: 'NetEase', initial: 'W' },
@@ -126,7 +128,7 @@ api.get('/health', (_req, res) => {
   res.json({
     data: {
       status: 'ok',
-      version: '2.0.0',
+      version,
       uptimeSeconds: Math.round(process.uptime()),
       upstream: config.upstreamApi,
     },

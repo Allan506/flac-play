@@ -1,6 +1,6 @@
 {
   "name": "flac-play",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "description": "Buscador de música de alta fidelidad para los catálogos de Kuwo y NetEase.",
