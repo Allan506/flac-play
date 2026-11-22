@@ -80,7 +80,7 @@ export const downloadSchema = z.object({
   coverUrl: z.string().trim().max(2000).default(''),
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
   embedMetadata: z.boolean().default(true),
-  highResolutionCover: z.boolean().default(false),
+  embedCover: z.boolean().default(true),
 });
 
 export const probeSchema = z.object({

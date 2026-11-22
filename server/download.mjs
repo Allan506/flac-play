@@ -13,6 +13,7 @@ import {
   sniffAudioFormat,
 } from './audio-format.mjs';
 import { config } from './config.mjs';
+import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, sanitizeFilename, sleep } from './utils.mjs';
@@ -164,12 +165,39 @@ async function probeFile(file) {
   }
 }
 
-async function fetchCover(coverUrl, jobDir) {
+async function probeImageSize(file) {
+  try {
+    const { stdout } = await execFileAsync(
+      config.ffprobePath,
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'json',
+        file,
+      ],
+      { timeout: 15_000, maxBuffer: 1024 * 1024 },
+    );
+    const stream = JSON.parse(stdout).streams?.[0] ?? {};
+    return {
+      width: Number(stream.width) || 0,
+      height: Number(stream.height) || 0,
+    };
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
+async function downloadCover(coverUrl, jobDir) {
   const url = assertCoverUrl(coverUrl);
   const response = await fetch(url, {
     headers: requestHeaders(coverUrl),
     redirect: 'follow',
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
@@ -202,6 +230,18 @@ async function fetchCover(coverUrl, jobDir) {
 
   await pipeline(Readable.fromWeb(response.body), limiter, createWriteStream(filePath));
   return filePath;
+}
+
+async function fetchCover(coverUrl, jobDir) {
+  let lastError = null;
+  for (const candidate of coverCandidates(coverUrl)) {
+    try {
+      return await downloadCover(candidate, jobDir);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new UpstreamError('No se pudo obtener la portada.', 502);
 }
 
 async function transcode({ sourcePath, outputPath, sourceFormat, outputFormat, bitrate, metadata, coverPath }) {
@@ -503,15 +543,17 @@ export async function downloadAndPrepare(input, jobDir) {
   const sourceFormat = actualFormat;
   const outputFormat = input.outputFormat;
   const needsConversion = sourceFormat !== outputFormat;
-  const wantsCover = input.embedMetadata && Boolean(input.coverUrl);
+  const wantsCover = input.embedMetadata && input.embedCover && Boolean(input.coverUrl);
   const needsWork = needsConversion || input.embedMetadata || wantsCover;
 
   let outputPath = sourcePath;
   let coverPath = '';
+  let coverSize = { width: 0, height: 0 };
 
   if (wantsCover) {
     try {
       coverPath = await fetchCover(input.coverUrl, jobDir);
+      coverSize = await probeImageSize(coverPath);
     } catch {
       coverPath = '';
     }
@@ -574,6 +616,8 @@ export async function downloadAndPrepare(input, jobDir) {
     outputFormat,
     converted: needsConversion,
     hasCover: Boolean(coverPath),
+    coverWidth: coverSize.width,
+    coverHeight: coverSize.height,
     verified: true,
   };
 }

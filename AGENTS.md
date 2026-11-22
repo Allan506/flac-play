@@ -20,6 +20,7 @@
 - The upstream can return a `.flac` URL whose content is MP3, or a `.mp3` URL whose content is FLAC. Trust the bytes, not the URL or `Content-Type`.
 - FLAC downloads retry the resolve up to three times because the upstream alternates variants between requests.
 - `server/audio-format.d.mts` provides TypeScript types for the `.mjs` module used by tests.
+- `server/covers.mjs` upgrades covers to the largest available source: Kuwo 1200px with 500/300/original fallbacks, NetEase original without `?param=`.
 
 ## Verification recipe
 
@@ -31,4 +32,4 @@ node_modules/ffprobe-static/bin/linux/x64/ffprobe -v error \
   -of json /tmp/file
 ```
 
-Response headers `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Output-Format` and `X-FLACPlay-Verified` confirm the delivered format.
+Response headers `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Output-Format` and `X-FLACPlay-Verified` confirm the delivered format. `X-FLACPlay-Cover-Resolution` should be `1200x1200` for Kuwo covers and the original size (for example `2000x2000`) for NetEase.

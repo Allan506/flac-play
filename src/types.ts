@@ -138,7 +138,7 @@ export interface DownloadOptions {
   quality: Quality;
   outputFormat?: AudioFormat;
   embedMetadata: boolean;
-  highResolutionCover: boolean;
+  embedCover: boolean;
 }
 
 export interface PlayerTrack {

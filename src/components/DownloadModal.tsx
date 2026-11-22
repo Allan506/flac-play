@@ -91,7 +91,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState('');
   const [embedMetadata, setEmbedMetadata] = useState(true);
-  const [highResCover, setHighResCover] = useState(true);
+  const [embedCover, setEmbedCover] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<Progress>({ received: 0, total: 0 });
   const [error, setError] = useState('');
@@ -163,7 +163,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
     setRecommended(null);
     setCheckError('');
     setEmbedMetadata(true);
-    setHighResCover(Boolean(track.pic_url));
+    setEmbedCover(Boolean(track.pic_url));
     setError('');
     setPreviewRejected(false);
     setFormatMismatch(null);
@@ -254,7 +254,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
           quality,
           outputFormat,
           embedMetadata,
-          highResolutionCover: highResCover && hasCover,
+          embedCover: embedCover && hasCover,
         },
         controller.signal,
       );
@@ -268,6 +268,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       const deliveredFormat = (response.headers.get('x-flacplay-output-format') ??
         outputFormat) as AudioFormat;
       const verified = response.headers.get('x-flacplay-verified') === '1';
+      const coverResolution = response.headers.get('x-flacplay-cover-resolution') ?? '';
       const filename = parseFilename(
         response.headers.get('content-disposition'),
         `${safeFilename(`${track.artist} - ${track.name}`)}.${deliveredFormat}`,
@@ -302,10 +303,11 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
       setProgress({ received, total: total || received });
+      const coverNote = coverResolution ? ` · portada ${coverResolution}` : '';
       onToast(
         verified
-          ? `Archivo ${deliveredFormat.toUpperCase()} real verificado y descargado.`
-          : `Archivo ${deliveredFormat.toUpperCase()} descargado.`,
+          ? `Archivo ${deliveredFormat.toUpperCase()} real verificado y descargado${coverNote}.`
+          : `Archivo ${deliveredFormat.toUpperCase()} descargado${coverNote}.`,
         'success',
       );
     } catch (caught) {
@@ -604,15 +606,15 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         <label className={`toggle-row ${!embedMetadata || !hasCover ? 'is-disabled' : ''}`}>
           <input
             type="checkbox"
-            checked={embedMetadata && highResCover && hasCover}
-            onChange={(event) => setHighResCover(event.target.checked)}
+            checked={embedMetadata && embedCover && hasCover}
+            onChange={(event) => setEmbedCover(event.target.checked)}
             disabled={downloading || !embedMetadata || !hasCover}
           />
           <span className="toggle-copy">
-            <strong>Incrustar portada</strong>
+            <strong>Incrustar portada en máxima resolución</strong>
             <small>
               {hasCover
-                ? 'Se usa la portada publicada por la fuente.'
+                ? 'Se descarga la portada original y se incrusta en el archivo.'
                 : 'La fuente no publicó una portada para esta pista.'}
             </small>
           </span>

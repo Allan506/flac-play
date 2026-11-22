@@ -232,6 +232,9 @@ api.post(
       res.setHeader('X-FLACPlay-Actual-Duration', String(Math.round(result.actualDuration)));
       res.setHeader('X-FLACPlay-Converted', result.converted ? '1' : '0');
       res.setHeader('X-FLACPlay-Cover', result.hasCover ? '1' : '0');
+      if (result.hasCover && result.coverWidth && result.coverHeight) {
+        res.setHeader('X-FLACPlay-Cover-Resolution', `${result.coverWidth}x${result.coverHeight}`);
+      }
       res.setHeader('X-FLACPlay-Preview', '0');
 
       const stream = createReadStream(result.path);

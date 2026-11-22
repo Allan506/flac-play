@@ -117,11 +117,11 @@ La comprobación es **orientativa**: el servidor lee los primeros 64 KB, detecta
 3. Identifica el códec real y la duración con `ffprobe`.
 4. Si se pidió FLAC y el archivo real no es FLAC, reintenta hasta tres veces con una resolución nueva. Si sigue sin ser FLAC, responde `422 SOURCE_FORMAT_MISMATCH` con el formato real detectado; nunca convierte MP3 a FLAC para simular pérdida cero.
 5. Si detecta una vista previa, reintenta y, si vuelve a fallar, responde `422 PREVIEW_ONLY`.
-6. Convierte a MP3 cuando se pide MP3, o incrusta metadatos y portada con `ffmpeg` cuando hace falta.
+6. Convierte a MP3 cuando se pide MP3, o incrusta metadatos y portada con `ffmpeg` cuando hace falta. La portada se pide en su resolución máxima: 1200 px en Kuwo (con 500, 300 y el tamaño original como alternativas) y la imagen original en NetEase.
 7. Verifica de nuevo el códec del archivo final con `ffprobe`. Si no coincide con `outputFormat`, responde `502 OUTPUT_FORMAT_MISMATCH`.
 8. Entrega el archivo con la extensión y el `Content-Type` reales, y elimina el directorio temporal.
 
-La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate` y `X-FLACPlay-Verified`.
+La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate`, `X-FLACPlay-Verified`, `X-FLACPlay-Cover` y, cuando hay portada, `X-FLACPlay-Cover-Resolution` (por ejemplo `1200x1200`).
 
 ## Pruebas
 
@@ -129,7 +129,7 @@ La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, 
 npm test
 ```
 
-Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda y la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`.
+Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, y la selección de portadas en máxima resolución.
 
 ## Limitaciones conocidas
 
