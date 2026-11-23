@@ -13,6 +13,7 @@ import {
   checkQualities,
   createJobDir,
   downloadAndPrepare,
+  missingTools,
   probeSource,
   removeJobDir,
 } from './download.mjs';
@@ -131,6 +132,10 @@ api.get('/config', (_req, res) => {
 });
 
 api.get('/health', (_req, res) => {
+  const tools = {
+    ffmpeg: Boolean(config.ffmpegPath),
+    ffprobe: Boolean(config.ffprobePath),
+  };
   res.json({
     data: {
       status: 'ok',
@@ -139,6 +144,8 @@ api.get('/health', (_req, res) => {
       startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
       uptimeSeconds: Math.round(process.uptime()),
       upstream: config.upstreamApi,
+      tools,
+      degraded: !tools.ffmpeg || !tools.ffprobe,
     },
   });
 });
@@ -319,6 +326,12 @@ const server = app.listen(config.port, config.host, () => {
   );
   if (!fs.existsSync(distDir)) {
     console.log('Aviso: dist/ no existe. Usa `npm run dev` o ejecuta `npm run build` antes de `npm start`.');
+  }
+  const missing = missingTools();
+  if (missing.length) {
+    console.warn(
+      `[${new Date().toISOString()}] tools_missing ${missing.join(',')}: las descargas responderán 503 hasta que se instalen. Ejecuta "npm install" permitiendo los scripts o instala ffmpeg en el sistema.`,
+    );
   }
 });
 

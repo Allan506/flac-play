@@ -12,6 +12,13 @@ mkdir -p "$TEMP_DIR"
 
 child=''
 watchdog=''
+delay=1
+
+if ! command -v ffmpeg >/dev/null 2>&1 \
+  && [ ! -x node_modules/ffmpeg-static/ffmpeg ] \
+  && [ ! -x "${FFMPEG_PATH:-/nonexistent}" ]; then
+  echo "[supervisor] $(date -Is) warning: ffmpeg no encontrado; las descargas responderán 503"
+fi
 
 stop() {
   trap - INT TERM
@@ -29,6 +36,7 @@ trap stop INT TERM HUP
 
 while true; do
   echo "[supervisor] $(date -Is) starting server on ${HOST}:${PORT}"
+  started=$(date +%s)
   node server/index.mjs &
   child=$!
   fails=0
@@ -60,6 +68,13 @@ while true; do
   wait "$watchdog" 2>/dev/null || true
   watchdog=''
   child=''
-  echo "[supervisor] $(date -Is) server exited status=${status}; restarting in 1s"
-  sleep 1
+  uptime=$(( $(date +%s) - started ))
+  if [ "$uptime" -lt 10 ]; then
+    delay=$(( delay * 2 ))
+    [ "$delay" -gt 30 ] && delay=30
+  else
+    delay=1
+  fi
+  echo "[supervisor] $(date -Is) server exited status=${status} after ${uptime}s; restarting in ${delay}s"
+  sleep "$delay"
 done

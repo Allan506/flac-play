@@ -1,5 +1,6 @@
 import { config } from './config.mjs';
 import { UpstreamError } from './errors.mjs';
+import { httpFetch } from './http.mjs';
 import {
   decodeEntities,
   normalizeQuality,
@@ -30,7 +31,7 @@ async function requestOnce(path, payload, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${config.upstreamApi}${path}`, {
+    const response = await httpFetch(`${config.upstreamApi}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
