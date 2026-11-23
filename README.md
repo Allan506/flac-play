@@ -7,7 +7,8 @@ El proyecto incluye un frontend React/Vite y un servidor Express que actúa como
 ## Requisitos
 
 - Node.js 20 o superior.
-- `ffmpeg` y `ffprobe`. El proyecto usa los binarios estáticos de `ffmpeg-static` y `ffprobe-static`, que se instalan con las dependencias.
+- `ffmpeg` y `ffprobe`. El proyecto usa los binarios estáticos de `ffmpeg-static` y `ffprobe-static`, que se descargan al instalar las dependencias. Si el sistema ya tiene `ffmpeg`/`ffprobe` en el `PATH`, o defines `FFMPEG_PATH`/`FFPROBE_PATH`, se usan esos.
+- npm 12 bloquea los scripts de instalación de dependencias por defecto. `package.json` incluye `allowScripts` para `ffmpeg-static`; si el binario no se descarga, `npm install` termina igualmente y las descargas fallarían con `503 TOOLS_UNAVAILABLE`. Instala `ffmpeg` en el sistema como alternativa.
 
 ## Puesta en marcha
 
@@ -26,16 +27,7 @@ npm run build
 npm start
 ```
 
-El servidor sirve `dist/` y la API en el mismo puerto (`12000` por defecto).
-
-Para producción con recuperación automática:
-
-```bash
-npm run build
-npm run start:supervised
-```
-
-El supervisor reinicia el servidor si termina inesperadamente y lo reinicia si `/api/health` falla tres veces seguidas. Si el contenedor completo se reinicia, el orquestador debe arrancar el servicio; usa Docker Compose o el mecanismo de arranque de tu plataforma.
+El servidor sirve `dist/` y la API en el mismo puerto (`12000` por defecto). `npm start` ejecuta el supervisor, que reinicia el servidor si termina inesperadamente (con retroceso exponencial) y lo reinicia si `/api/health` falla tres veces seguidas. Si el contenedor completo se reinicia, el orquestador debe arrancar el servicio; usa Docker Compose o el mecanismo de arranque de tu plataforma. Para ejecutar el servidor sin supervisor usa `npm run start:once`.
 
 ### Docker
 
@@ -58,7 +50,10 @@ La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tm
 - Los 404 de la API se registran como `api_not_found` con método, ruta y request ID.
 - Los 404/429 de la fuente se registran como `upstream_not_found` / `upstream_rate_limited` con la ruta y el payload.
 - Los errores 5xx se registran como `request_failed`; los fallos no capturados se registran como `unhandled_rejection` o `uncaught_exception`.
-- Comprueba el estado con `curl http://127.0.0.1:12000/api/health`.
+- Comprueba el estado con `curl http://127.0.0.1:12000/api/health`. El campo `tools` indica si `ffmpeg` y `ffprobe` están disponibles, y `degraded` es `true` cuando falta alguno.
+- Si una descarga responde `503 TOOLS_UNAVAILABLE`, el servidor no encontró `ffmpeg`/`ffprobe`. Ejecuta `npm install` (con `allowScripts` habilitado), instala `ffmpeg` en el sistema o define `FFMPEG_PATH`/`FFPROBE_PATH`.
+- El log `transcode_failed` incluye el `stderr` de `ffmpeg` para diagnosticar fallos de conversión.
+- `scripts/serve-prod.sh` reinicia el servidor con retroceso exponencial (máximo 30 s) si cae en bucle; el aviso `ffmpeg no encontrado` aparece al arrancar.
 
 ## Scripts
 
@@ -66,8 +61,9 @@ La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tm
 | --- | --- |
 | `npm run dev` | Vite y API con recarga automática. |
 | `npm run build` | Comprueba tipos y genera `dist/`. |
-| `npm start` | Servidor de producción. |
-| `npm run start:supervised` | Servidor con supervisor y healthcheck. |
+| `npm start` | Servidor de producción con supervisor y healthcheck. |
+| `npm run start:supervised` | Igual que `npm start` (alias explícito). |
+| `npm run start:once` | Servidor de producción sin supervisor (depuración). |
 | `npm test` | Pruebas unitarias con Vitest. |
 | `npm run typecheck` | TypeScript sin emitir archivos. |
 

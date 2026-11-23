@@ -5,12 +5,10 @@
 - `npm run dev` — Vite frontend on 12000, API on 12001.
 - `npm run build` — typecheck and build `dist/`.
 - `npm test` — Vitest (`tests/**/*.test.ts`).
-- `NODE_ENV=production PORT=12000 node server/index.mjs` — production server.
+- `npm start` — production server under `scripts/serve-prod.sh` (supervisor + health watchdog).
+- `npm run start:once` — plain `node server/index.mjs` for debugging.
 
-`ffmpeg`/`ffprobe` are not on `PATH`. Use the static binaries:
-
-- `node_modules/ffmpeg-static/ffmpeg`
-- `node_modules/ffprobe-static/bin/linux/x64/ffprobe`
+`ffmpeg`/`ffprobe` are resolved in this order: `FFMPEG_PATH`/`FFPROBE_PATH`, the static package binaries, then the `PATH` (`/usr/local/bin`, `/usr/bin`, `/bin`, `/opt/homebrew/bin`, `/snap/bin`). `server/tools.mjs` implements the lookup and `server/config.mjs` runs it once at import.
 
 ## Format verification
 
@@ -24,11 +22,15 @@
 
 ## Incident notes
 
+- **Downloads returned `502 PREPARATION_FAILED`.** npm 12 blocks dependency install scripts unless they are listed in `allowScripts`, so `ffmpeg-static`'s install script never ran and the binary was missing while `npm install` still exited 0. Every download embeds metadata or a cover, so it always passes through `transcode` and failed. Fix: `allowScripts` in `package.json`, runtime tool resolution with system/PATH fallbacks, `503 TOOLS_UNAVAILABLE` instead of a misleading 502, `tools`/`degraded` in `/api/health`, `transcode_failed` logs with ffmpeg `stderr`, and the Docker runtime installs distro `ffmpeg` with `FFMPEG_PATH`/`FFPROBE_PATH` set.
+- **Intermittent `504` on Kuwo downloads.** Node's built-in fetch aborts a TCP connect after 10 s, and some Kuwo CDN addresses are slow, so 3 attempts died at ~12 s each. `server/http.mjs` uses an `undici` Agent with a 20 s connect timeout and socket reuse; MP3 downloads went from ~50 % failures to 3/3 successes.
+- **A native catalog client is not viable without the Manus service.** Probed from the workspace: Kuwo metadata works (`search.kuwo.cn/r.s` returns `MINFO` with real sizes; `m.kuwo.cn/newh5/singles/songinfoandlrc` returns LRC; `stype=albuminfo` returns albums), but Kuwo audio is blocked: `antiserver.kuwo.cn/anti.s` answers with 5-11 s trial clips for every rid and `www.kuwo.cn/api/v1/www/music/playUrl` rejects requests with `The request is illegal!` unless the JS-generated `Secret` header is present. NetEase metadata works (`api/search/get`, `api/song/lyric`, `api/v1/album/<id>`), but `api/song/enhance/player/url` returns `url: null` for every track without a `MUSIC_U` cookie. Conclusion: keep `UPSTREAM_API`; it is the only working resolver.
+- `UPSTREAM_API` sleeps when idle. `requestUpstream` retries three times (700 ms, 1800 ms) and turns a connection failure into "El catálogo no respondió. Puede estar despertando…" so the first search after a pause explains itself.
 - The reported 404 was not a missing frontend route. The upstream answers unknown/renamed paths with HTML 404 (`Cannot POST /api/...`), and stale results could send an album ID from the previous catalog after a failed search/platform switch. Both paths are now handled.
-- The server stop was a `SIGTERM` followed by a full workspace restart: PID 1 (agent server) had a later start time than the app. A single `nohup node` process cannot survive that. Use `npm run start:supervised` for process crashes/health failures; use Docker Compose or the platform's service manager for full container restarts.
+- The server stop was a `SIGTERM` followed by a full workspace restart: PID 1 (agent server) had a later start time than the app. A single `nohup node` process cannot survive that. Use `npm start` (supervisor) for process crashes/health failures; use Docker Compose or the platform's service manager for full container restarts.
 - Logs now include ISO timestamps, `X-Request-Id`, `api_not_found`, `upstream_not_found`, `upstream_rate_limited`, `request_failed`, `unhandled_rejection`, and `uncaught_exception`.
-- `scripts/serve-prod.sh` is the supervisor used by `npm run start:supervised`; it restarts the child and has a three-strike health watchdog.
-- After a workspace/container restart, run `npm run start:supervised` again (or `docker compose up -d --build` when Docker is available). Nothing inside the workspace can survive a full container restart by itself.
+- `scripts/serve-prod.sh` is the supervisor behind `npm start`; it restarts the child with exponential backoff and has a three-strike health watchdog.
+- After a workspace/container restart, run `npm start` again (or `docker compose up -d --build` when Docker is available). Nothing inside the workspace can survive a full container restart by itself.
 
 ## Search and album robustness
 

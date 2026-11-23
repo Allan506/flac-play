@@ -15,6 +15,7 @@ import {
 import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
+import { httpFetch } from './http.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, sanitizeFilename, sleep } from './utils.mjs';
 
@@ -31,6 +32,26 @@ const COVER_EXT = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
+
+export function missingTools() {
+  const missing = [];
+  if (!config.ffmpegPath) missing.push('ffmpeg');
+  if (!config.ffprobePath) missing.push('ffprobe');
+  return missing;
+}
+
+function toolsUnavailable(missing) {
+  return new HttpError(
+    503,
+    'TOOLS_UNAVAILABLE',
+    `El servidor no tiene ${missing.join(' ni ')} disponible, así que no puede preparar la descarga. Instala ffmpeg en el sistema o ejecuta "npm install" permitiendo los scripts de instalación.`,
+  );
+}
+
+function assertTools() {
+  const missing = missingTools();
+  if (missing.length) throw toolsUnavailable(missing);
+}
 
 async function ensureTempRoot() {
   await fs.mkdir(config.tempDir, { recursive: true });
@@ -70,7 +91,7 @@ async function fetchToFile(url, destination, { maxBytes, timeoutMs, label }) {
   let received = 0;
 
   try {
-    const response = await fetch(url, {
+    const response = await httpFetch(url, {
       headers: requestHeaders(url),
       redirect: 'follow',
       signal: controller.signal,
@@ -135,6 +156,7 @@ async function fetchToFile(url, destination, { maxBytes, timeoutMs, label }) {
 }
 
 async function probeFile(file) {
+  if (!config.ffprobePath) throw toolsUnavailable(['ffprobe']);
   try {
     const { stdout } = await execFileAsync(
       config.ffprobePath,
@@ -194,7 +216,7 @@ async function probeImageSize(file) {
 
 async function downloadCover(coverUrl, jobDir) {
   const url = assertCoverUrl(coverUrl);
-  const response = await fetch(url, {
+  const response = await httpFetch(url, {
     headers: requestHeaders(coverUrl),
     redirect: 'follow',
     signal: AbortSignal.timeout(15_000),
@@ -245,6 +267,8 @@ async function fetchCover(coverUrl, jobDir) {
 }
 
 async function transcode({ sourcePath, outputPath, sourceFormat, outputFormat, bitrate, metadata, coverPath }) {
+  if (!config.ffmpegPath) throw toolsUnavailable(['ffmpeg']);
+
   const args = ['-hide_banner', '-loglevel', 'error', '-y', '-i', sourcePath];
   if (coverPath) args.push('-i', coverPath);
 
@@ -289,7 +313,11 @@ async function transcode({ sourcePath, outputPath, sourceFormat, outputFormat, b
       timeout: 120_000,
       maxBuffer: 8 * 1024 * 1024,
     });
-  } catch {
+  } catch (error) {
+    console.error(
+      `[${new Date().toISOString()}] transcode_failed code=${error?.code ?? ''} signal=${error?.signal ?? ''} stderr=${String(error?.stderr ?? '').slice(0, 800)}`,
+    );
+    if (error?.code === 'ENOENT') throw toolsUnavailable(['ffmpeg']);
     throw new HttpError(
       502,
       'PREPARATION_FAILED',
@@ -325,7 +353,7 @@ async function fetchAudioPrefix(url, maxBytes = 65_536) {
   let response = null;
   for (const range of [null, `bytes=0-${maxBytes - 1}`]) {
     try {
-      response = await fetch(url, {
+      response = await httpFetch(url, {
         method: 'GET',
         headers: {
           ...requestHeaders(url),
@@ -460,6 +488,8 @@ export async function checkQualities(input) {
 }
 
 export async function downloadAndPrepare(input, jobDir) {
+  assertTools();
+
   const sourcePath = path.join(jobDir, 'source.bin');
   let resolved = null;
   let transfer = null;

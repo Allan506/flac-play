@@ -1,5 +1,6 @@
 import { config } from './config.mjs';
 import { UpstreamError } from './errors.mjs';
+import { httpFetch } from './http.mjs';
 import {
   decodeEntities,
   normalizeQuality,
@@ -30,7 +31,7 @@ async function requestOnce(path, payload, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${config.upstreamApi}${path}`, {
+    const response = await httpFetch(`${config.upstreamApi}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -93,7 +94,9 @@ async function requestOnce(path, payload, timeoutMs) {
     if (error?.name === 'AbortError') {
       throw new UpstreamError('La fuente tardó demasiado en responder.', 504);
     }
-    throw new UpstreamError('No se pudo conectar con la fuente de música.', 502);
+    const failure = new UpstreamError('No se pudo conectar con la fuente de música.', 502);
+    failure.unreachable = true;
+    throw failure;
   } finally {
     clearTimeout(timer);
   }
@@ -101,7 +104,7 @@ async function requestOnce(path, payload, timeoutMs) {
 
 async function requestUpstream(path, payload) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await requestOnce(path, payload, config.upstreamTimeoutMs);
     } catch (error) {
@@ -109,9 +112,15 @@ async function requestUpstream(path, payload) {
       const retryable =
         error instanceof UpstreamError &&
         (error.status === 502 || error.status === 503 || error.status === 504);
-      if (!retryable || attempt === 1) break;
-      await sleep(450 + attempt * 350);
+      if (!retryable || attempt === 2) break;
+      await sleep(attempt === 0 ? 700 : 1800);
     }
+  }
+  if (lastError instanceof UpstreamError && lastError.unreachable) {
+    throw new UpstreamError(
+      'El catálogo no respondió. Puede estar despertando; vuelve a intentarlo en unos segundos.',
+      502,
+    );
   }
   throw lastError;
 }
