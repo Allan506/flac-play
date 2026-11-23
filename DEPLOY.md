@@ -1,6 +1,6 @@
 # Despliegue
 
-## Antes de nada: el catálogo no está en este repo
+## El catálogo vive fuera: no lo apagues
 
 La búsqueda, la resolución de audio, las letras y los datos de álbum se piden a `UPSTREAM_API`
 (por defecto `https://flacplay-ik32bcxq.manus.space`). Este servidor solo descarga, verifica,
@@ -9,11 +9,14 @@ convierte y prepara el archivo.
 Si `UPSTREAM_API` no responde, la app contesta:
 
 ```json
-{"error":{"code":"UPSTREAM_UNAVAILABLE","message":"No se pudo conectar con la fuente de música."}}
+{"error":{"code":"UPSTREAM_UNAVAILABLE","message":"El catálogo no respondió. Puede estar despertando; vuelve a intentarlo en unos segundos."}}
 ```
 
-Es decir: **apagar ese servicio deja la app sin búsquedas ni descargas**. Antes de retirarlo hay
-que tener un reemplazo y apuntar `UPSTREAM_API` a él.
+Ese servicio se suspende por inactividad y tarda unos segundos en despertar. El servidor reintenta
+tres veces con espera creciente, así que la primera búsqueda tras una pausa puede tardar pero suele
+resolver. Si vas a desplegar la app en otro sitio, mantén el catálogo encendido o apunta
+`UPSTREAM_API` a un reemplazo que devuelva el mismo contrato (`/api/search`, `/api/resolve`,
+`/api/lyrics`, `/api/album`).
 
 ## Opción A: Render (Docker, plan gratuito)
 
