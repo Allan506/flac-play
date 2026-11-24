@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getConfig, resolveTrack, searchTracks } from './api';
+import { ApiError, getConfig, resolveTrack, searchTracks } from './api';
 import { AlbumModal } from './components/AlbumModal';
 import { DownloadModal } from './components/DownloadModal';
 import { Footer } from './components/Footer';
@@ -187,12 +187,30 @@ export default function App() {
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return;
         if (controller.signal.aborted) return;
+        if (nextPlatform === 'wyy' && caught instanceof ApiError && caught.code === 'UPSTREAM_UNAVAILABLE') {
+          try {
+            const fallback = await searchTracks(
+              { platform: 'kuwo', keyword: query, page: nextPage },
+              controller.signal,
+            );
+            if (controller.signal.aborted) return;
+            setPlatform('kuwo');
+            setResults(fallback);
+            setPage(fallback.page);
+            setSubmittedKeyword(query);
+            if (options.updateUrl !== false) updateUrl(query, 'kuwo', fallback.page);
+            showToast('NetEase no responde ahora mismo. Mostrando resultados de Kuwo.', 'info');
+            return;
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+        }
         setError(caught instanceof Error ? caught.message : 'No se pudo completar la búsqueda.');
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [maxKeywordLength, setHistory, updateUrl],
+    [maxKeywordLength, setHistory, showToast, updateUrl],
   );
 
   useEffect(() => {

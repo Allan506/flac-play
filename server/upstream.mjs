@@ -16,6 +16,25 @@ function logUpstream(event, path, payload, status) {
   );
 }
 
+export function upstreamAppErrorMessage(path, payload) {
+  if (path.includes('/search')) {
+    if (payload?.platform === 'wyy') {
+      return 'NetEase no está entregando resultados ahora mismo. Busca en Kuwo mientras se recupera.';
+    }
+    return 'El catálogo no devolvió resultados para esta búsqueda. Prueba otra palabra o cambia de catálogo.';
+  }
+  if (path.includes('/resolve')) {
+    return 'El catálogo no pudo entregar el audio de esta pista. Prueba otra versión o cambia de catálogo.';
+  }
+  if (path.includes('/lyrics')) {
+    return 'El catálogo no tiene la letra de esta pista.';
+  }
+  if (path.includes('/album')) {
+    return 'El catálogo no pudo abrir ese álbum.';
+  }
+  return 'El catálogo no pudo completar la solicitud. Inténtalo de nuevo en unos segundos.';
+}
+
 function upstreamNotFoundMessage(path) {
   if (path.includes('/album')) {
     return 'La fuente no encontró ese álbum. Vuelve a buscar la pista o abre la ficha original.';
@@ -85,7 +104,8 @@ async function requestOnce(path, payload, timeoutMs) {
     }
 
     if (typeof body?.code === 'number' && body.code !== 0) {
-      throw new UpstreamError(body.msg || 'La fuente no pudo completar la solicitud.', 502);
+      logUpstream('app_error', path, { ...payload, upstreamMessage: body.msg }, response.status);
+      throw new UpstreamError(upstreamAppErrorMessage(path, payload), 502);
     }
 
     return body;
