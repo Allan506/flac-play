@@ -23,7 +23,7 @@ export function Header({ onOpenSettings, onGoSearch, onGoCatalog }: HeaderProps)
     <header className="topbar">
       <a
         className="brand"
-        href="/"
+        href={import.meta.env.BASE_URL}
         onClick={(event) => {
           event.preventDefault();
           window.scrollTo({ top: 0, behavior: 'smooth' });
