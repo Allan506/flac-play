@@ -47,6 +47,7 @@ export const resolveSchema = z.object({
   bitrate,
   time,
   sign,
+  requireLossless: z.boolean().default(false),
 });
 
 export const lyricsSchema = z.object({
@@ -81,6 +82,8 @@ export const downloadSchema = z.object({
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
   embedMetadata: z.boolean().default(true),
   embedCover: z.boolean().default(true),
+  requireLossless: z.boolean().default(false),
+  allowDoubtful: z.boolean().default(false),
 });
 
 export const probeSchema = z.object({
@@ -99,6 +102,7 @@ export const checkSchema = z.object({
   time,
   sign,
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
+  requireLossless: z.boolean().default(false),
   qualities: z
     .array(z.object({ format, bitrate }))
     .min(1, 'No hay calidades para comprobar.')

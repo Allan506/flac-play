@@ -32,6 +32,8 @@ export const config = {
   host: process.env.HOST ?? '0.0.0.0',
   port: Number(process.env.PORT ?? 12000),
   upstreamApi: (process.env.UPSTREAM_API ?? 'https://flacplay-ik32bcxq.manus.space').replace(/\/+$/, ''),
+  neteaseNative: (process.env.NETEASE_NATIVE ?? 'true') !== 'false',
+  neteaseCookie: process.env.NETEASE_COOKIE ?? '',
   upstreamTimeoutMs: Number(process.env.UPSTREAM_TIMEOUT_MS ?? 25_000),
   connectTimeoutMs: Number(process.env.CONNECT_TIMEOUT_MS ?? 20_000),
   headersTimeoutMs: Number(process.env.HEADERS_TIMEOUT_MS ?? 60_000),
@@ -43,7 +45,14 @@ export const config = {
   ffprobePath,
   userAgent:
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-  audioHostSuffixes: ['.kuwo.cn', '.kuwo.com', '.126.net', '.126.com', '.music.126.net'],
+  audioHostSuffixes: [
+    '.kuwo.cn',
+    '.kuwo.com',
+    '.126.net',
+    '.126.com',
+    '.music.126.net',
+    '.music.163.com',
+  ],
   coverHostSuffixes: ['.kuwo.cn', '.kuwo.com', '.126.net', '.126.com', '.music.126.net'],
   cache: {
     searchMs: 60_000,

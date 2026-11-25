@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getConfig, resolveTrack, searchTracks } from './api';
+import { ApiError, getConfig, resolveTrack, searchTracks } from './api';
 import { AlbumModal } from './components/AlbumModal';
 import { DownloadModal } from './components/DownloadModal';
 import { Footer } from './components/Footer';
@@ -45,6 +45,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   reducedMotion: false,
   autoplayNext: true,
   saveHistory: true,
+  strictLossless: false,
 };
 
 interface AlbumTarget {
@@ -187,12 +188,30 @@ export default function App() {
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return;
         if (controller.signal.aborted) return;
+        if (nextPlatform === 'wyy' && caught instanceof ApiError && caught.code === 'UPSTREAM_UNAVAILABLE') {
+          try {
+            const fallback = await searchTracks(
+              { platform: 'kuwo', keyword: query, page: nextPage },
+              controller.signal,
+            );
+            if (controller.signal.aborted) return;
+            setPlatform('kuwo');
+            setResults(fallback);
+            setPage(fallback.page);
+            setSubmittedKeyword(query);
+            if (options.updateUrl !== false) updateUrl(query, 'kuwo', fallback.page);
+            showToast('NetEase no responde ahora mismo. Mostrando resultados de Kuwo.', 'info');
+            return;
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+        }
         setError(caught instanceof Error ? caught.message : 'No se pudo completar la búsqueda.');
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [maxKeywordLength, setHistory, updateUrl],
+    [maxKeywordLength, setHistory, showToast, updateUrl],
   );
 
   useEffect(() => {
@@ -279,6 +298,16 @@ export default function App() {
     onPrevious: () => previousRef.current(),
   });
 
+  const strictRef = useRef(false);
+  useEffect(() => {
+    strictRef.current = preferences.strictLossless;
+  }, [preferences.strictLossless]);
+
+  const pickQuality = useCallback((track: Track): Quality | null => {
+    if (!strictRef.current) return bestQuality(track);
+    return track.minfo.find((item) => item.format === 'flac') ?? null;
+  }, []);
+
   const playTrack = useCallback(
     async (track: Track, quality: Quality, platformOverride?: Platform) => {
       const targetPlatform = platformOverride ?? platformRef.current;
@@ -291,6 +320,7 @@ export default function App() {
           bitrate: quality.bitrate,
           time: track.time,
           sign: track.sign,
+          requireLossless: strictRef.current,
         });
         const next: PlayerTrack = { track, platform: targetPlatform, quality, url: resolved.url };
         setPlayerTrack(next);
@@ -343,7 +373,7 @@ export default function App() {
     if (!queue.length) return;
     const index = current ? queue.findIndex((track) => track.id === current.track.id) : -1;
     const next = queue[(index + 1) % queue.length];
-    const quality = bestQuality(next);
+    const quality = pickQuality(next);
     if (quality) {
       void playTrack(next, quality, current?.platform ?? platformRef.current);
     }
@@ -355,7 +385,7 @@ export default function App() {
     if (!queue.length) return;
     const index = current ? queue.findIndex((track) => track.id === current.track.id) : 0;
     const previous = queue[(index - 1 + queue.length) % queue.length];
-    const quality = bestQuality(previous);
+    const quality = pickQuality(previous);
     if (quality) {
       void playTrack(previous, quality, current?.platform ?? platformRef.current);
     }
@@ -450,7 +480,7 @@ export default function App() {
 
   const handlePlayFromLyrics = () => {
     if (!lyricsTarget) return;
-    const quality = bestQuality(lyricsTarget.track);
+    const quality = pickQuality(lyricsTarget.track);
     if (quality) void playTrack(lyricsTarget.track, quality, lyricsTarget.platform);
   };
 
@@ -585,6 +615,7 @@ export default function App() {
             onLyrics={(track) => handleLyrics(track, platform)}
             onAlbum={(track) => handleAlbum(track, platform)}
             onDownload={(track) => handleDownload(track, platform)}
+            strictLossless={preferences.strictLossless}
             onPageChange={handlePageChange}
             onSuggestion={(value) => {
               setKeyword(value);
@@ -671,6 +702,7 @@ export default function App() {
         onPlay={(track, quality) => handlePlay(track, quality, albumTarget?.platform ?? platform)}
         onLyrics={(track) => handleLyrics(track, albumTarget?.platform ?? platform)}
         onDownload={(track) => handleDownload(track, albumTarget?.platform ?? platform)}
+        strictLossless={preferences.strictLossless}
       />
 
       <DownloadModal
@@ -678,6 +710,7 @@ export default function App() {
         onClose={() => setDownloadTarget(null)}
         track={downloadTarget?.track ?? null}
         platform={downloadTarget?.platform ?? platform}
+        strictLossless={preferences.strictLossless}
         onToast={showToast}
       />
 

@@ -1,6 +1,14 @@
+import { cached } from './cache.mjs';
 import { config } from './config.mjs';
 import { UpstreamError } from './errors.mjs';
 import { httpFetch } from './http.mjs';
+import {
+  neteaseAlbum,
+  neteaseAudio,
+  neteaseLyrics,
+  neteaseSongDetail,
+  searchNetease,
+} from './netease.mjs';
 import {
   decodeEntities,
   normalizeQuality,
@@ -14,6 +22,25 @@ function logUpstream(event, path, payload, status) {
   console.warn(
     `[${new Date().toISOString()}] upstream_${event} path=${path} status=${status} payload=${JSON.stringify(payload).slice(0, 500)}`,
   );
+}
+
+export function upstreamAppErrorMessage(path, payload) {
+  if (path.includes('/search')) {
+    if (payload?.platform === 'wyy') {
+      return 'NetEase no está entregando resultados ahora mismo. Busca en Kuwo mientras se recupera.';
+    }
+    return 'El catálogo no devolvió resultados para esta búsqueda. Prueba otra palabra o cambia de catálogo.';
+  }
+  if (path.includes('/resolve')) {
+    return 'El catálogo no pudo entregar el audio de esta pista. Prueba otra versión o cambia de catálogo.';
+  }
+  if (path.includes('/lyrics')) {
+    return 'El catálogo no tiene la letra de esta pista.';
+  }
+  if (path.includes('/album')) {
+    return 'El catálogo no pudo abrir ese álbum.';
+  }
+  return 'El catálogo no pudo completar la solicitud. Inténtalo de nuevo en unos segundos.';
 }
 
 function upstreamNotFoundMessage(path) {
@@ -85,7 +112,8 @@ async function requestOnce(path, payload, timeoutMs) {
     }
 
     if (typeof body?.code === 'number' && body.code !== 0) {
-      throw new UpstreamError(body.msg || 'La fuente no pudo completar la solicitud.', 502);
+      logUpstream('app_error', path, { ...payload, upstreamMessage: body.msg }, response.status);
+      throw new UpstreamError(upstreamAppErrorMessage(path, payload), 502);
     }
 
     return body;
@@ -155,7 +183,108 @@ export function normalizeTrack(raw) {
   };
 }
 
+const TRACK_CACHE_MS = 6 * 60 * 60_000;
+
+function rememberTrack(track) {
+  return cached(`wyy-track:${track.id}`, TRACK_CACHE_MS, async () => track);
+}
+
+function normalizeTitle(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\((?!feat)[^)]*\)|\[[^\]]*\]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function rankKuwoMatches(meta, candidates, { requireLossless = false } = {}) {
+  const objetivo = normalizeTitle(meta.name);
+  if (!objetivo) return [];
+  return candidates
+    .filter((track) => !requireLossless || track.minfo.some((item) => item.format === 'flac'))
+    .map((track) => {
+      const titulo = normalizeTitle(track.name);
+      const mismoTitulo = titulo === objetivo || titulo.includes(objetivo) || objetivo.includes(titulo);
+      const desvio = meta.duration ? Math.abs(track.duration - meta.duration) : 0;
+      return { track, mismoTitulo, desvio };
+    })
+    .filter((item) => item.mismoTitulo && item.desvio <= 8)
+    .sort((a, b) => a.desvio - b.desvio)
+    .map((item) => item.track);
+}
+
+export function pickKuwoMatch(meta, candidates, options = {}) {
+  return rankKuwoMatches(meta, candidates, options)[0] ?? null;
+}
+
+export function chooseQuality(minfo, format, bitrate) {
+  const peso = (item) => Number(item.bitrate) || (item.format === 'flac' ? 2000 : 128);
+  const objetivo = format === 'flac' ? 2000 : Number(bitrate) || 128;
+  const dentro = minfo.filter((item) => peso(item) <= objetivo);
+  const elegida = (dentro.length ? dentro : minfo).sort((a, b) => peso(b) - peso(a))[0];
+  return elegida ? { format: elegida.format, bitrate: elegida.bitrate } : { format, bitrate };
+}
+
+async function neteaseTrackMeta(songid) {
+  return cached(`wyy-track:${songid}`, TRACK_CACHE_MS, () => neteaseSongDetail(songid));
+}
+
+async function resolveNeteaseAudio({ songid, format, bitrate, requireLossless }) {
+  const directo = await neteaseAudio({ songid, format, bitrate }).catch(() => null);
+  if (directo?.url) {
+    if (!requireLossless || directo.format === 'flac') return directo;
+  }
+
+  const meta = await neteaseTrackMeta(songid);
+  if (!meta) {
+    throw new UpstreamError('No se pudo identificar esta pista de NetEase.', 502);
+  }
+
+  const { list } = await searchTracks({
+    platform: 'kuwo',
+    keyword: `${meta.artist} ${meta.name}`.trim(),
+    page: 1,
+  });
+  const candidatas = rankKuwoMatches(meta, list, { requireLossless }).slice(0, requireLossless ? 3 : 1);
+  const gemela = candidatas[0] ?? null;
+  if (!gemela) {
+    throw new UpstreamError(
+      requireLossless
+        ? 'NetEase no entrega esta pista sin cuenta y en Kuwo no hay una versión equivalente con FLAC. Prueba otra pista o añade tu cookie de NetEase.'
+        : 'NetEase no entrega el audio de esta pista (requiere cuenta) y no hay una versión equivalente en Kuwo.',
+      502,
+    );
+  }
+  const calidad = requireLossless
+    ? chooseQuality(gemela.minfo, 'flac', '2000')
+    : chooseQuality(gemela.minfo, format, bitrate);
+  const audio = await resolveAudio({
+    platform: 'kuwo',
+    songid: gemela.id,
+    format: calidad.format,
+    bitrate: calidad.bitrate,
+    time: gemela.time,
+    sign: gemela.sign,
+  });
+  if (requireLossless && String(audio.format).toLowerCase() !== 'flac') {
+    throw new UpstreamError(
+      `Kuwo no entrega esta pista en FLAC: solo ofrece ${String(audio.format).toUpperCase()}. No se reproduce en modo sin pérdida.`,
+      422,
+    );
+  }
+  return audio;
+}
+
 export async function searchTracks({ platform, keyword, page }) {
+  if (platform === 'wyy' && config.neteaseNative) {
+    const nativo = await searchNetease({ keyword, page });
+    const list = nativo.list.map(normalizeTrack).filter(Boolean);
+    list.forEach(rememberTrack);
+    return { list, total: nativo.total, page };
+  }
+
   const body = await requestUpstream('/api/search', { platform, keyword, page });
   const data = body?.data ?? {};
   const list = Array.isArray(data.list) ? data.list.map(normalizeTrack).filter(Boolean) : [];
@@ -166,29 +295,52 @@ export async function searchTracks({ platform, keyword, page }) {
   };
 }
 
-export async function resolveAudio({ platform, songid, format, bitrate, time, sign }) {
-  const body = await requestUpstream('/api/resolve', {
-    platform,
-    songid,
-    format,
-    bitrate,
-    time,
-    sign,
-  });
-  const data = body?.data ?? {};
-  if (!data.url) {
-    throw new UpstreamError('La fuente no devolvió un enlace de audio para esta calidad.', 502);
+export async function resolveAudio({ platform, songid, format, bitrate, time, sign, requireLossless = false }) {
+  if (platform === 'wyy' && config.neteaseNative) {
+    return resolveNeteaseAudio({ songid, format, bitrate, requireLossless });
   }
-  return {
-    url: toHttps(data.url),
-    format: String(data.format ?? format).toLowerCase(),
-    bitrate: String(data.bitrate ?? bitrate),
-    duration: toSeconds(data.duration),
-    songid: String(data.songid ?? songid),
-  };
+
+  let ultimo = null;
+  for (let intento = 0; intento < (requireLossless ? 3 : 1); intento += 1) {
+    const body = await requestUpstream('/api/resolve', {
+      platform,
+      songid,
+      format,
+      bitrate,
+      time,
+      sign,
+    });
+
+    const data = body?.data ?? {};
+    if (!data.url) {
+      throw new UpstreamError('La fuente no devolvió un enlace de audio para esta calidad.', 502);
+    }
+
+    const audio = {
+      url: toHttps(data.url),
+      format: String(data.format ?? format).toLowerCase(),
+      bitrate: String(data.bitrate ?? bitrate),
+      duration: toSeconds(data.duration),
+      songid: String(data.songid ?? songid),
+    };
+    if (!requireLossless || audio.format === 'flac') return audio;
+    ultimo = audio;
+    await sleep(400);
+  }
+
+  throw new UpstreamError(
+    `La fuente solo entrega ${String(ultimo?.format ?? 'audio').toUpperCase()} para esta pista tras varios intentos. No se reproduce en modo sin pérdida.`,
+    422,
+  );
 }
 
 export async function fetchLyrics({ platform, songid, time, sign }) {
+  if (platform === 'wyy' && config.neteaseNative) {
+    const letra = await neteaseLyrics({ songid });
+    if (letra.trim()) return letra.replace(/^\uFEFF/, '').trim();
+    throw new UpstreamError('NetEase no tiene la letra de esta pista.', 502);
+  }
+
   const body = await requestUpstream('/api/lyrics', { platform, songid, time, sign });
   const data = body?.data;
   const lyrics =
@@ -203,6 +355,20 @@ export async function fetchLyrics({ platform, songid, time, sign }) {
 }
 
 export async function fetchAlbum({ platform, id, page, size }) {
+  if (platform === 'wyy' && config.neteaseNative) {
+    const nativo = await neteaseAlbum({ id, page, size });
+    const list = nativo.list.map(normalizeTrack).filter(Boolean);
+    list.forEach(rememberTrack);
+    return {
+      info: nativo.info,
+      list,
+      total: nativo.total,
+      page,
+      size,
+      hasMore: page * size < nativo.total,
+    };
+  }
+
   const body = await requestUpstream('/api/album', { platform, id, page, size });
   const data = body?.data ?? {};
   const info = data.info ?? {};

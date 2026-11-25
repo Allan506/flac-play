@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, checkQualities, downloadTrack, readApiError } from '../api';
 import type {
   ActualAudioFormat,
@@ -30,6 +30,7 @@ interface DownloadModalProps {
   onClose: () => void;
   track: Track | null;
   platform: Platform;
+  strictLossless?: boolean;
   onToast: (message: string, kind?: 'success' | 'error' | 'info') => void;
 }
 
@@ -46,6 +47,11 @@ function actualFormatLabel(format: ActualAudioFormat | undefined): string {
   if (format === 'm4a') return 'M4A/AAC';
   if (format === 'ogg') return 'OGG';
   return 'formato desconocido';
+}
+
+function formatKhz(hz: number): string {
+  if (!hz) return '—';
+  return `${(hz / 1000).toFixed(1).replace('.', ',')} kHz`;
 }
 
 function parseFilename(disposition: string | null, fallback: string): string {
@@ -81,7 +87,14 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
   unknown: 'Sin comprobar',
 };
 
-export function DownloadModal({ open, onClose, track, platform, onToast }: DownloadModalProps) {
+export function DownloadModal({
+  open,
+  onClose,
+  track,
+  platform,
+  strictLossless = false,
+  onToast,
+}: DownloadModalProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [checks, setChecks] = useState<QualityCheck[]>([]);
   const [recommended, setRecommended] = useState<{
@@ -96,6 +109,13 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
   const [progress, setProgress] = useState<Progress>({ received: 0, total: 0 });
   const [error, setError] = useState('');
   const [previewRejected, setPreviewRejected] = useState(false);
+  const [losslessRejected, setLosslessRejected] = useState<{
+    verdict: string;
+    cutoffHz: number;
+    limitHz: number;
+    label: string;
+  } | null>(null);
+  const [allowDoubtful, setAllowDoubtful] = useState(false);
   const [formatMismatch, setFormatMismatch] = useState<{
     actualFormat: ActualAudioFormat;
     actualBitrate: number;
@@ -104,7 +124,10 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
   const abortRef = useRef<AbortController | null>(null);
   const userPickedRef = useRef(false);
 
-  const qualities = track?.minfo ?? [];
+  const qualities = useMemo(() => {
+    const all = track?.minfo ?? [];
+    return strictLossless ? all.filter((item) => item.format === 'flac') : all;
+  }, [track, strictLossless]);
   const quality: Quality | null = qualities[selectedIndex] ?? qualities[0] ?? null;
   const hasCover = Boolean(track?.pic_url);
   const qualitySignature = qualities.map((item) => `${item.format}:${item.bitrate}`).join(',');
@@ -166,6 +189,8 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
     setEmbedCover(Boolean(track.pic_url));
     setError('');
     setPreviewRejected(false);
+    setLosslessRejected(null);
+    setAllowDoubtful(false);
     setFormatMismatch(null);
     setProgress({ received: 0, total: 0 });
     setDownloading(false);
@@ -187,6 +212,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         time: track.time,
         sign: track.sign,
         expectedDurationSeconds: track.duration,
+        requireLossless: strictLossless,
         qualities: qualities.map((item) => ({ format: item.format, bitrate: item.bitrate })),
       },
       controller.signal,
@@ -236,7 +262,7 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
     setFormatMismatch(null);
   };
 
-  const startDownload = async (overrideOutput?: AudioFormat) => {
+  const startDownload = async (overrideOutput?: AudioFormat, forceDoubtful = false) => {
     if (!quality || downloading || selectedUnavailable) return;
     const outputFormat = overrideOutput ?? actualOutputFormat ?? quality.format;
     const controller = new AbortController();
@@ -253,6 +279,8 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         {
           quality,
           outputFormat,
+          requireLossless: strictLossless || outputFormat === 'flac',
+          allowDoubtful: forceDoubtful || allowDoubtful,
           embedMetadata,
           embedCover: embedCover && hasCover,
         },
@@ -268,6 +296,9 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
       const deliveredFormat = (response.headers.get('x-flacplay-output-format') ??
         outputFormat) as AudioFormat;
       const verified = response.headers.get('x-flacplay-verified') === '1';
+      const losslessVerdict = response.headers.get('x-flacplay-lossless-verdict') ?? '';
+      const losslessCutoff = Number(response.headers.get('x-flacplay-lossless-cutoff-hz')) || 0;
+      const losslessLimit = Number(response.headers.get('x-flacplay-lossless-limit-hz')) || 0;
       const coverResolution = response.headers.get('x-flacplay-cover-resolution') ?? '';
       const filename = parseFilename(
         response.headers.get('content-disposition'),
@@ -304,12 +335,19 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
 
       setProgress({ received, total: total || received });
       const coverNote = coverResolution ? ` · portada ${coverResolution}` : '';
-      onToast(
-        verified
-          ? `Archivo ${deliveredFormat.toUpperCase()} real verificado y descargado${coverNote}.`
-          : `Archivo ${deliveredFormat.toUpperCase()} descargado${coverNote}.`,
-        'success',
-      );
+      const losslessNote =
+        losslessVerdict === 'lossless'
+          ? ` · FLAC verificado (${formatKhz(losslessCutoff)} de ${formatKhz(losslessLimit)})`
+          : losslessVerdict === 'high-cut'
+            ? ` · FLAC con corte en ${formatKhz(losslessCutoff)}`
+            : '';
+      const headline =
+        losslessVerdict === 'high-cut'
+          ? `Archivo ${deliveredFormat.toUpperCase()} descargado con aviso`
+          : verified
+            ? `Archivo ${deliveredFormat.toUpperCase()} real verificado y descargado`
+            : `Archivo ${deliveredFormat.toUpperCase()} descargado`;
+      onToast(`${headline}${losslessNote}${coverNote}.`, 'success');
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         setError('Descarga detenida. No se guardó ningún archivo parcial.');
@@ -335,6 +373,16 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
               : check,
           ),
         );
+        setError(caught.message);
+      } else if (caught instanceof ApiError && caught.code === 'LOSSLESS_NOT_VERIFIED') {
+        setLosslessRejected({
+          verdict: String(caught.details?.verdict ?? 'unknown'),
+          cutoffHz: Number(caught.details?.cutoffHz) || 0,
+          limitHz: Number(caught.details?.limitHz) || 0,
+          label: String(caught.details?.label ?? ''),
+        });
+        setError(caught.message);
+      } else if (caught instanceof ApiError && caught.code === 'LOSSLESS_INTEGRITY_FAILED') {
         setError(caught.message);
       } else if (caught instanceof ApiError && caught.code === 'PREVIEW_ONLY') {
         setPreviewRejected(true);
@@ -438,7 +486,11 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
           <p className="download-kicker">ELIGE LA CALIDAD DE ORIGEN</p>
           <div className="quality-options" role="radiogroup" aria-label="Calidad de descarga">
             {qualities.length === 0 ? (
-              <span className="quality-empty">Sin calidades disponibles</span>
+              <span className="quality-empty">
+                {strictLossless
+                  ? 'Esta pista no publica FLAC: el modo verificado no la descarga.'
+                  : 'Sin calidades disponibles'}
+              </span>
             ) : null}
             {qualities.map((item, index) => {
               const check =
@@ -590,6 +642,40 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         )}
       </div>
 
+      {selectedCheck?.spectrum ? (
+        <div
+          className={`lossless-box ${
+            selectedCheck.spectrum.verdict === 'lossless'
+              ? 'is-ok'
+              : selectedCheck.spectrum.verdict === 'high-cut'
+                ? 'is-warning'
+                : 'is-bad'
+          }`}
+        >
+          {selectedCheck.spectrum.verdict === 'lossless' ? (
+            <CheckIcon size={16} />
+          ) : (
+            <AlertIcon size={16} />
+          )}
+          <div>
+            <strong>
+              {selectedCheck.spectrum.verdict === 'lossless'
+                ? 'FLAC verificado: espectro completo.'
+                : selectedCheck.spectrum.label}
+            </strong>
+            <span>
+              Corte medido en {formatKhz(selectedCheck.spectrum.cutoffHz)} de{' '}
+              {formatKhz(selectedCheck.spectrum.limitHz)} ·{' '}
+              {selectedCheck.spectrum.bits || 16} bits ·{' '}
+              {(selectedCheck.spectrum.sampleRate / 1000).toFixed(1).replace('.', ',')} kHz ·{' '}
+              {selectedCheck.spectrum.integrityOk === false
+                ? 'integridad MD5 fallida'
+                : 'se vuelve a verificar al descargar'}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       <div className="metadata-options">
         <label className="toggle-row">
           <input
@@ -647,6 +733,23 @@ export function DownloadModal({ open, onClose, track, platform, onToast }: Downl
         <p className="download-error" role="alert">
           {error}
         </p>
+      ) : null}
+
+      {losslessRejected && losslessRejected.verdict === 'high-cut' ? (
+        <button
+          type="button"
+          className="secondary-button lossless-accept"
+          onClick={() => {
+            setAllowDoubtful(true);
+            setLosslessRejected(null);
+            setError('');
+            void startDownload(undefined, true);
+          }}
+          disabled={downloading}
+        >
+          Descargar igualmente ({formatKhz(losslessRejected.cutoffHz)} de{' '}
+          {formatKhz(losslessRejected.limitHz)})
+        </button>
       ) : null}
 
       {previewRejected || selectedPreview ? (
