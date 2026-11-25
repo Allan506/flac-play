@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseCorsOrigins } from './cors.mjs';
 import { resolveExecutable } from './tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,7 @@ export const config = {
   downloadTimeoutMs: Number(process.env.DOWNLOAD_TIMEOUT_MS ?? 180_000),
   maxDownloadBytes: Number(process.env.MAX_DOWNLOAD_BYTES ?? 240 * 1024 * 1024),
   maxCoverBytes: 12 * 1024 * 1024,
+  corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS),
   tempDir: process.env.TEMP_DIR ?? path.join(here, '..', '.tmp', 'downloads'),
   ffmpegPath,
   ffprobePath,

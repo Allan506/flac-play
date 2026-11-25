@@ -12,6 +12,8 @@ import type {
   Track,
 } from './types';
 
+const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '');
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -39,7 +41,7 @@ async function readJson(response: Response): Promise<unknown> {
 async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(body),
@@ -72,7 +74,7 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
 }
 
 export function getConfig(signal?: AbortSignal): Promise<AppConfig> {
-  return fetch('/api/config', { signal })
+  return fetch(`${API_BASE}/api/config`, { signal })
     .then(async (response) => {
       const payload = (await readJson(response)) as { data?: AppConfig };
       if (!response.ok || !payload.data) {
@@ -161,7 +163,7 @@ export function downloadTrack(
   options: DownloadOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
-  return fetch('/api/download', {
+  return fetch(`${API_BASE}/api/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     signal,

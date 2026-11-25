@@ -2,6 +2,7 @@ import compression from 'compression';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import { corsHeaders } from './cors.mjs';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { createReadStream } from 'node:fs';
@@ -41,6 +42,19 @@ app.set('trust proxy', 1);
 app.use((req, res, next) => {
   req.requestId = randomUUID();
   res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
+app.use((req, res, next) => {
+  const headers = corsHeaders(req.headers.origin, config.corsOrigins);
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) res.setHeader(key, value);
+    if (headers['Access-Control-Allow-Origin'] !== '*') res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS' && req.path.startsWith('/api/')) {
+    res.status(headers ? 204 : 403).end();
+    return;
+  }
   next();
 });
 
