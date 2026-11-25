@@ -82,6 +82,9 @@ Todas las variables son opcionales.
 | `TEMP_DIR` | `.tmp/downloads` | Directorio temporal de trabajos. |
 | `FFMPEG_PATH` | binario de `ffmpeg-static` | Ruta a `ffmpeg`. |
 | `FFPROBE_PATH` | binario de `ffprobe-static` | Ruta a `ffprobe`. |
+| `CORS_ORIGINS` | vacío (cualquier origen) | Lista separada por comas de orígenes permitidos. Necesaria si el frontend se sirve desde otro dominio, como GitHub Pages. |
+| `VITE_API_BASE` | vacío (mismo origen) | Origen de la API que usa el frontend al compilar. |
+| `VITE_BASE` | `/` | Ruta base del frontend al compilar. En GitHub Pages es `/flac-play/`. |
 
 ## API
 
@@ -159,6 +162,17 @@ Veredictos posibles: `lossless` (espectro completo), `high-cut` (corte alto comp
 La descarga añade `X-FLACPlay-Lossless-Verdict`, `X-FLACPlay-Lossless-Label`, `X-FLACPlay-Lossless-Cutoff-Hz`, `X-FLACPlay-Lossless-Limit-Hz`, `X-FLACPlay-Lossless-Integrity`, `X-FLACPlay-Lossless-Bits` y `X-FLACPlay-Lossless-Sample-Rate`. Si el FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide), responde `422 LOSSLESS_INTEGRITY_FAILED`.
 
 En la interfaz, el ajuste **Solo FLAC verificado** (Ajustes, se guarda en `localStorage`) filtra la búsqueda y los álbumes a pistas con FLAC, reproduce solo en FLAC y muestra en el diálogo de descarga el corte medido antes de bajar el archivo. Cuando el veredicto es dudoso, el botón se convierte en una confirmación explícita; el aviso final nunca afirma que el archivo sea sin pérdida si el análisis no lo confirma.
+
+## GitHub Pages
+
+El frontend es estático, así que se puede publicar en GitHub Pages apuntando a un servidor propio:
+
+- `https://allan506.github.io/flac-play/` sirve la interfaz.
+- La API sigue viviendo en `https://flac-play.onrender.com`.
+
+El flujo `.github/workflows/pages.yml` compila con `VITE_BASE=/flac-play/` y `VITE_API_BASE=https://flac-play.onrender.com`, ejecuta las pruebas, copia `index.html` a `404.html` para las rutas profundas y publica en Pages. Se dispara con cada push a `main` o a mano desde la pestaña *Actions*.
+
+El servidor responde a las peticiones cruzadas con `Access-Control-Allow-Origin` y expone las cabeceras `X-FLACPlay-*` y `Content-Disposition`. Sin ese CORS, el navegador bloquea la respuesta y la interfaz no puede leer el veredicto de FLAC ni el nombre del archivo. Para limitar quién puede llamar a la API, define `CORS_ORIGINS` con los orígenes permitidos; sin la variable se acepta cualquier origen, igual que una llamada directa con `curl`.
 
 ## Pruebas
 

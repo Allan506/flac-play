@@ -61,6 +61,24 @@ fly deploy
 | `CONNECT_TIMEOUT_MS` | `20000` | Tiempo máximo para abrir conexión con el CDN. |
 | `UPSTREAM_TIMEOUT_MS` | `25000` | Tiempo máximo por intento contra el catálogo. |
 | `DOWNLOAD_TIMEOUT_MS` | `180000` | Tiempo máximo de descarga por intento. |
+| `CORS_ORIGINS` | vacío (cualquier origen) | Orígenes autorizados a llamar a la API desde el navegador. Imprescindible si el frontend está en otro dominio. |
+
+## Opción D: frontend en GitHub Pages, API en Render
+
+GitHub Pages solo sirve archivos estáticos, así que publica la interfaz y deja la API donde ya está.
+
+1. En el repositorio, *Settings* → *Pages* → *Source*: **GitHub Actions**.
+2. Haz push a `main`. El flujo `.github/workflows/pages.yml` compila con `VITE_BASE=/flac-play/` y `VITE_API_BASE=https://flac-play.onrender.com` y publica en `https://<usuario>.github.io/flac-play/`.
+3. El servidor debe enviar CORS. Con `CORS_ORIGINS` vacío se acepta cualquier origen; para restringirlo, define por ejemplo `CORS_ORIGINS=https://allan506.github.io`.
+
+Si la interfaz carga pero las búsquedas fallan con error de red, el navegador está bloqueando la respuesta: falta el CORS en el servidor o el origen no está en `CORS_ORIGINS`. Compruébalo con:
+
+```bash
+curl -s -D - -o /dev/null -X OPTIONS https://<host>/api/search \
+  -H 'Origin: https://<usuario>.github.io' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type' | grep -i access-control
+```
 
 ## Comprobaciones tras desplegar
 
