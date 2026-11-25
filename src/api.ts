@@ -104,6 +104,7 @@ export function resolveTrack(
     bitrate: string;
     time: number;
     sign: string;
+    requireLossless?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<ResolvedAudio> {
@@ -146,6 +147,7 @@ export function checkQualities(
     time: number;
     sign: string;
     expectedDurationSeconds: number;
+    requireLossless?: boolean;
     qualities: Array<{ format: Quality['format']; bitrate: string }>;
   },
   signal?: AbortSignal,
@@ -178,6 +180,8 @@ export function downloadTrack(
       expectedDurationSeconds: track.duration,
       embedMetadata: options.embedMetadata,
       embedCover: options.embedCover,
+      requireLossless: Boolean(options.requireLossless),
+      allowDoubtful: Boolean(options.allowDoubtful),
     }),
   });
 }

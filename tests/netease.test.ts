@@ -63,6 +63,21 @@ describe('pickKuwoMatch', () => {
   it('devuelve null cuando no hay nada razonable', () => {
     expect(pickKuwoMatch(meta, [{ id: '9', name: 'Paradise', duration: 268 }])).toBeNull();
   });
+
+  it('en modo verificado solo acepta gemelas con FLAC', () => {
+    const conMinfo = [
+      { id: '3', name: 'Yellow', duration: 268, minfo: [{ format: 'mp3', bitrate: '320' }] },
+      {
+        id: '4',
+        name: 'Yellow',
+        duration: 268,
+        minfo: [{ format: 'flac', bitrate: '2000' }],
+      },
+    ];
+    expect(pickKuwoMatch(meta, conMinfo, { requireLossless: true })?.id).toBe('4');
+    expect(pickKuwoMatch(meta, [conMinfo[0]], { requireLossless: true })).toBeNull();
+    expect(pickKuwoMatch(meta, [conMinfo[0]], { requireLossless: false })?.id).toBe('3');
+  });
 });
 
 describe('chooseQuality', () => {

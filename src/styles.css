@@ -2504,6 +2504,72 @@ kbd {
   color: var(--warn);
 }
 
+.lossless-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 13px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.lossless-box > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.lossless-box div {
+  display: grid;
+  gap: 3px;
+}
+
+.lossless-box strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.lossless-box.is-ok {
+  border-color: rgba(200, 245, 106, 0.32);
+  background: rgba(200, 245, 106, 0.05);
+}
+
+.lossless-box.is-ok > svg {
+  color: var(--acid);
+}
+
+.lossless-box.is-warning {
+  border-color: rgba(255, 212, 121, 0.35);
+  background: rgba(255, 212, 121, 0.06);
+  color: #e7d2a0;
+}
+
+.lossless-box.is-warning > svg,
+.lossless-box.is-warning strong {
+  color: var(--warn);
+}
+
+.lossless-box.is-bad {
+  border-color: rgba(255, 120, 120, 0.35);
+  background: rgba(255, 120, 120, 0.06);
+  color: #f0b4b4;
+}
+
+.lossless-box.is-bad > svg,
+.lossless-box.is-bad strong {
+  color: #ff8f8f;
+}
+
+.lossless-accept {
+  margin: 0 0 13px;
+  width: 100%;
+  justify-content: center;
+}
+
 .metadata-options {
   display: grid;
   gap: 8px;

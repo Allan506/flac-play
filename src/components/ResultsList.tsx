@@ -26,6 +26,7 @@ interface ResultsListProps {
   onLyrics: (track: Track) => void;
   onAlbum: (track: Track) => void;
   onDownload: (track: Track) => void;
+  strictLossless?: boolean;
   onPageChange: (page: number) => void;
   onSuggestion: (value: string) => void;
   onGoSearch: () => void;
@@ -53,6 +54,7 @@ export function ResultsList({
   onLyrics,
   onAlbum,
   onDownload,
+  strictLossless = false,
   onPageChange,
   onSuggestion,
   onGoSearch,
@@ -153,6 +155,7 @@ export function ResultsList({
           >
             {filtered.map((track, index) => (
               <TrackRow
+                strictLossless={strictLossless}
                 key={`${track.id}-${index}`}
                 track={track}
                 index={index}

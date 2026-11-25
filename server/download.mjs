@@ -16,6 +16,7 @@ import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { httpFetch } from './http.mjs';
+import { analyzeFile, analyzeRemote, verdictLabel } from './lossless.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, sanitizeFilename, sleep } from './utils.mjs';
 
@@ -376,6 +377,19 @@ async function fetchAudioPrefix(url, maxBytes = 65_536) {
   return response;
 }
 
+function losslessMessage(analysis) {
+  const khz = (hz) => `${((hz ?? 0) / 1000).toFixed(1).replace('.', ',')} kHz`;
+  const corte = khz(analysis.cutoffHz);
+  const limite = khz(analysis.limitHz);
+  if (analysis.verdict === 'high-cut') {
+    return `El FLAC se corta en ${corte} de ${limite} posibles: no se puede garantizar que no venga de un MP3 320. Confírmalo para descargarlo igualmente.`;
+  }
+  if (analysis.verdict === 'transcoded') {
+    return `El FLAC se corta en ${corte} de ${limite}: viene de audio con pérdida recodificado. No se entrega como FLAC sin pérdida.`;
+  }
+  return `${verdictLabel(analysis.verdict)}: no se puede verificar como FLAC real.`;
+}
+
 export async function probeSource(input) {
   let lastResult = null;
 
@@ -402,6 +416,9 @@ export async function probeSource(input) {
         ? observedKbps < 400
         : actualFormat !== 'unknown' && observedKbps < 64);
 
+    const spectrum =
+      actualFormat === 'flac' ? await analyzeRemote(url).catch(() => null) : null;
+
     lastResult = {
       available: true,
       sourceFormat: actualFormat,
@@ -415,6 +432,8 @@ export async function probeSource(input) {
       contentLength,
       expectedDurationSeconds: expected,
       likelyPreview,
+      spectrum,
+      losslessVerified: spectrum ? spectrum.verdict === 'lossless' : false,
     };
 
     const acceptable =
@@ -454,6 +473,8 @@ export async function checkQualities(input) {
         contentLength: 0,
         expectedDurationSeconds: input.expectedDurationSeconds,
         likelyPreview: false,
+        spectrum: null,
+        losslessVerified: false,
         error: error instanceof Error ? error.message : 'No se pudo comprobar esta calidad.',
       });
     }
@@ -476,13 +497,16 @@ export async function checkQualities(input) {
         (item.actualFormat ?? item.format) === item.format,
     )
     .sort((a, b) => rank(b) - rank(a));
-  const recommended = full[0] ?? null;
+  const verified = full.find((item) => item.losslessVerified) ?? null;
+  const recommended = verified ?? full[0] ?? null;
 
   return {
     qualities: checks,
     recommended: recommended
       ? { format: recommended.format, bitrate: recommended.bitrate }
       : null,
+    recommendedVerified: Boolean(verified),
+    losslessVerified: Boolean(verified),
     allPreview: checks.length > 0 && checks.every((item) => item.likelyPreview),
   };
 }
@@ -573,6 +597,39 @@ export async function downloadAndPrepare(input, jobDir) {
   const sourceFormat = actualFormat;
   const outputFormat = input.outputFormat;
   const needsConversion = sourceFormat !== outputFormat;
+
+  let lossless = null;
+  if (outputFormat === 'flac') {
+    lossless = await analyzeFile(sourcePath, { deep: true });
+    const dudosoAceptado = lossless.verdict === 'high-cut' && Boolean(input.allowDoubtful);
+    const integro = lossless.integrityOk !== false;
+    if (lossless.verdict !== 'lossless' && !dudosoAceptado) {
+      throw new HttpError(
+        422,
+        'LOSSLESS_NOT_VERIFIED',
+        losslessMessage(lossless),
+        {
+          verdict: lossless.verdict,
+          label: lossless.label,
+          cutoffHz: lossless.cutoffHz,
+          limitHz: lossless.limitHz,
+          ratio: lossless.ratio,
+          integrityOk: lossless.integrityOk,
+          sampleRate: lossless.sampleRate,
+          bits: lossless.bits,
+          allowDoubtful: Boolean(input.allowDoubtful),
+        },
+      );
+    }
+    if (!integro) {
+      throw new HttpError(
+        422,
+        'LOSSLESS_INTEGRITY_FAILED',
+        'El archivo FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide). No se entrega.',
+        { integrityOk: false },
+      );
+    }
+  }
   const wantsCover = input.embedMetadata && input.embedCover && Boolean(input.coverUrl);
   const needsWork = needsConversion || input.embedMetadata || wantsCover;
 
@@ -649,5 +706,6 @@ export async function downloadAndPrepare(input, jobDir) {
     coverWidth: coverSize.width,
     coverHeight: coverSize.height,
     verified: true,
+    lossless,
   };
 }
