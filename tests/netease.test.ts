@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eapiParams, mapNeteaseSong } from '../server/netease.mjs';
+import { detectFormat, eapiParams, levelChain, mapNeteaseSong } from '../server/netease.mjs';
 import { chooseQuality, pickKuwoMatch } from '../server/upstream.mjs';
 
 describe('eapiParams', () => {
@@ -27,7 +27,7 @@ describe('mapNeteaseSong', () => {
   };
 
   it('traduce la canción al modelo de la app', () => {
-    const pista = mapNeteaseSong(cancion, undefined, { lossless: true });
+    const pista = mapNeteaseSong(cancion);
     if (!pista) throw new Error('la pista no se pudo mapear');
     expect(pista.id).toBe('17177324');
     expect(pista.artist).toBe('Coldplay');
@@ -37,14 +37,47 @@ describe('mapNeteaseSong', () => {
     expect(pista.minfo.map((c) => c.format)).toEqual(['flac', 'mp3', 'mp3']);
   });
 
-  it('sin sesión de NetEase no promete FLAC', () => {
-    const pista = mapNeteaseSong(cancion, undefined, { lossless: false });
+  it('ofrece FLAC aunque no haya sesión, porque el resolvedor busca la gemela en Kuwo', () => {
+    const pista = mapNeteaseSong(cancion);
+    expect(pista?.minfo.map((c) => c.format)).toEqual(['flac', 'mp3', 'mp3']);
+    expect(pista?.hasSQ).toBe(true);
+  });
+
+  it('no ofrece FLAC cuando el catálogo solo tiene MP3', () => {
+    const pista = mapNeteaseSong({ ...cancion, privilege: { maxbr: 320000 } });
     expect(pista?.minfo.map((c) => c.format)).toEqual(['mp3', 'mp3']);
     expect(pista?.hasSQ).toBe(false);
   });
 
   it('descarta entradas sin identificador', () => {
     expect(mapNeteaseSong({ name: 'sin id' })).toBeNull();
+  });
+});
+
+describe('levelChain', () => {
+  it('pide Hi-Res y luego lossless para FLAC', () => {
+    expect(levelChain('flac', '2000')).toEqual(['hires', 'lossless']);
+  });
+
+  it('pide exhigh y cae a standard para MP3 320', () => {
+    expect(levelChain('mp3', '320')).toEqual(['exhigh', 'standard']);
+    expect(levelChain('mp3', '128')).toEqual(['standard']);
+  });
+});
+
+describe('detectFormat', () => {
+  it('usa el tipo que declara NetEase', () => {
+    expect(detectFormat({ type: 'flac', url: 'https://x/y' }, 'mp3')).toBe('flac');
+    expect(detectFormat({ type: 'mp3', url: 'https://x/y' }, 'flac')).toBe('mp3');
+  });
+
+  it('cae a la extensión de la URL cuando no hay tipo', () => {
+    expect(detectFormat({ url: 'https://m8.music.126.net/a.flac' }, 'mp3')).toBe('flac');
+    expect(detectFormat({ url: 'https://m8.music.126.net/a.mp3' }, 'flac')).toBe('mp3');
+  });
+
+  it('mantiene el formato pedido si no hay ninguna pista', () => {
+    expect(detectFormat({}, 'flac')).toBe('flac');
   });
 });
 

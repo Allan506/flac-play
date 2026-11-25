@@ -67,9 +67,10 @@ fly deploy
 
 GitHub Pages solo sirve archivos estáticos, así que publica la interfaz y deja la API donde ya está.
 
-1. En el repositorio, *Settings* → *Pages* → *Source*: **GitHub Actions**.
-2. Haz push a `main`. El flujo `.github/workflows/pages.yml` compila con `VITE_BASE=/flac-play/` y `VITE_API_BASE=https://flac-play.onrender.com` y publica en `https://<usuario>.github.io/flac-play/`.
-3. El servidor debe enviar CORS. Con `CORS_ORIGINS` vacío se acepta cualquier origen; para restringirlo, define por ejemplo `CORS_ORIGINS=https://allan506.github.io`.
+1. En el repositorio, *Settings* → *Pages* → *Source*: **Deploy from a branch**, rama `gh-pages`, carpeta `/ (root)`.
+2. Publica con `npm run publish:pages`: compila con `VITE_BASE=/flac-play/` y `VITE_API_BASE=https://flac-play.onrender.com`, copia `index.html` como `404.html` y fuerza la rama `gh-pages` con el contenido de `dist/`. Pages sirve el resultado en `https://<usuario>.github.io/flac-play/`.
+3. `.github/workflows/pages.yml` repite el paso 2 en cada push a `main`. Para añadirlo al repositorio hace falta un token con el permiso `workflow` y que *Settings* → *Actions* → *General* → *Workflow permissions* permita escribir. Mientras no esté, publica con `npm run publish:pages`.
+4. El servidor debe enviar CORS. Con `CORS_ORIGINS` vacío se acepta cualquier origen; para restringirlo, define por ejemplo `CORS_ORIGINS=https://allan506.github.io`.
 
 Si la interfaz carga pero las búsquedas fallan con error de red, el navegador está bloqueando la respuesta: falta el CORS en el servidor o el origen no está en `CORS_ORIGINS`. Compruébalo con:
 

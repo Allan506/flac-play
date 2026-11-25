@@ -1,14 +1,14 @@
 import { BrandMark } from './Header';
 import { ExternalIcon } from './Icons';
 
-export function Footer() {
+export function Footer({ version }: { version?: string }) {
   return (
     <footer className="site-footer">
       <div className="footer-brand">
         <BrandMark />
         <span>FLAC PLAY</span>
         <span className="footer-separator">/</span>
-        <span>v2.0</span>
+        <span>v{version ?? '2.2.0'}</span>
       </div>
 
       <details className="disclaimer">

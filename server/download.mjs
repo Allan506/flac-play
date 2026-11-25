@@ -16,7 +16,7 @@ import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { httpFetch } from './http.mjs';
-import { analyzeFile, analyzeRemote, verdictLabel } from './lossless.mjs';
+import { analyzeFile, analyzeRemote, verifyFlacIntegrity, verdictLabel } from './lossless.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, sanitizeFilename, sleep } from './utils.mjs';
 
@@ -86,7 +86,104 @@ function requestHeaders(url) {
   return headers;
 }
 
-async function fetchToFile(url, destination, { maxBytes, timeoutMs, label }) {
+const PARALLEL_MIN_BYTES = 6 * 1024 * 1024;
+
+function downloadConnections() {
+  const value = Number(process.env.DOWNLOAD_CONCURRENCY ?? 4);
+  return Number.isFinite(value) ? Math.max(1, Math.min(8, Math.trunc(value))) : 4;
+}
+
+async function downloadRange(url, destination, { start, end, signal }) {
+  const response = await httpFetch(url, {
+    headers: { ...requestHeaders(url), Range: `bytes=${start}-${end}` },
+    redirect: 'follow',
+    signal,
+  });
+  if (response.status !== 206 || !response.body) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error('range-unsupported');
+  }
+  await pipeline(
+    Readable.fromWeb(response.body),
+    createWriteStream(destination, { start, flags: 'r+' }),
+  );
+}
+
+/**
+ * El CDN de Kuwo limita la velocidad por conexión. Pedir el archivo en varios
+ * rangos simultáneos multiplica el ancho de banda efectivo.
+ */
+async function tryParallelDownload(url, destination, { maxBytes, timeoutMs }) {
+  const connections = downloadConnections();
+  if (connections < 2) return null;
+
+  let total = 0;
+  let contentType = '';
+  try {
+    const probe = await httpFetch(url, {
+      headers: { ...requestHeaders(url), Range: 'bytes=0-1' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(Math.min(20_000, timeoutMs)),
+    });
+    const ranged = probe.status === 206;
+    total = Number((probe.headers.get('content-range') ?? '').match(/\/(\d+)$/)?.[1] ?? 0);
+    contentType = probe.headers.get('content-type') ?? '';
+    await probe.body?.cancel().catch(() => {});
+    if (!ranged || !total) return null;
+    if (total > maxBytes) {
+      throw new HttpError(413, 'FILE_TOO_LARGE', 'El archivo supera el límite de descarga permitido.');
+    }
+    if (total < PARALLEL_MIN_BYTES) return null;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const handle = await fs.open(destination, 'w');
+    await handle.truncate(total);
+    await handle.close();
+
+    const span = Math.ceil(total / connections);
+    const tasks = [];
+    for (let index = 0; index < connections; index += 1) {
+      const start = index * span;
+      const end = Math.min(total, start + span) - 1;
+      if (start > end) break;
+      tasks.push(downloadRange(url, destination, { start, end, signal: controller.signal }));
+    }
+    await Promise.all(tasks);
+
+    const stats = await fs.stat(destination);
+    if (stats.size !== total) return null;
+    return { bytes: total, contentType, contentLength: total };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+async function fetchToFile(url, destination, options) {
+  const t0 = Date.now();
+  const fast = await tryParallelDownload(url, destination, options).catch(() => null);
+  if (fast) {
+    console.log(
+      `[${new Date().toISOString()}] transfer path=parallel chunks=${downloadConnections()} ms=${Date.now() - t0} bytes=${fast.bytes}`,
+    );
+    return fast;
+  }
+  const result = await fetchToFileSequential(url, destination, options);
+  console.log(
+    `[${new Date().toISOString()}] transfer path=sequential ms=${Date.now() - t0} bytes=${result.bytes}`,
+  );
+  return result;
+}
+
+async function fetchToFileSequential(url, destination, { maxBytes, timeoutMs, label }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let received = 0;
@@ -394,7 +491,10 @@ export async function probeSource(input) {
   let lastResult = null;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const resolved = await resolveAudio(input);
+    const resolved = await resolveAudio({
+      ...input,
+      requireLossless: String(input.format).toLowerCase() === 'flac',
+    });
     const url = assertAudioUrl(resolved.url);
     const expected = input.expectedDurationSeconds || resolved.duration || 0;
     const bitrate = Number(input.bitrate) || 0;
@@ -421,6 +521,8 @@ export async function probeSource(input) {
 
     lastResult = {
       available: true,
+      url,
+      sourcePlatform: resolved.sourcePlatform ?? input.platform,
       sourceFormat: actualFormat,
       actualFormat,
       actualBitrate,
@@ -460,7 +562,8 @@ export async function checkQualities(input) {
         sign: input.sign,
         expectedDurationSeconds: input.expectedDurationSeconds,
       });
-      checks.push({ ...quality, ...probe, error: '' });
+      const { url: _url, ...publicProbe } = probe;
+      checks.push({ ...quality, ...publicProbe, error: '' });
     } catch (error) {
       checks.push({
         ...quality,
@@ -511,8 +614,55 @@ export async function checkQualities(input) {
   };
 }
 
+/**
+ * Entrega el audio sin pasar por disco cuando no hay nada que preparar: mismo
+ * formato de salida, sin metadatos ni portada y con el FLAC ya verificado. El
+ * navegador empieza a recibir bytes mientras el CDN sigue enviando.
+ */
+export async function streamDirect(input) {
+  if (input.embedMetadata || input.embedCover) return null;
+  const probe = await probeSource(input);
+  if (!probe?.available || !probe.url) return null;
+  if (probe.likelyPreview || probe.formatMismatch) return null;
+  if (probe.actualFormat !== input.outputFormat) return null;
+  if (input.outputFormat === 'flac' && !probe.losslessVerified) return null;
+  return {
+    url: probe.url,
+    size: probe.contentLength,
+    mime: AUDIO_MIME[input.outputFormat],
+    outputFormat: input.outputFormat,
+    sourceFormat: probe.actualFormat,
+    actualBitrate: probe.actualBitrate,
+    actualDuration: probe.expectedDurationSeconds,
+    sourcePlatform: probe.sourcePlatform,
+    lossless: probe.spectrum,
+    filename: buildFilename(input, input.outputFormat),
+    converted: false,
+    hasCover: false,
+    verified: true,
+    direct: true,
+  };
+}
+
+export function openAudioStream(url) {
+  return httpFetch(url, {
+    headers: requestHeaders(url),
+    redirect: 'follow',
+    signal: AbortSignal.timeout(config.downloadTimeoutMs),
+  });
+}
+
+export function buildFilename(input, outputFormat) {
+  const baseName = input.title || 'flacplay-audio';
+  const prefix = input.artist && input.artist !== 'Artista no indicado' ? `${input.artist} - ` : '';
+  return `${sanitizeFilename(`${prefix}${baseName}`)}.${outputFormat}`;
+}
+
 export async function downloadAndPrepare(input, jobDir) {
   assertTools();
+  const t0 = Date.now();
+  const marks = [];
+  const mark = (label) => marks.push(`${label}=${Date.now() - t0}ms`);
 
   const sourcePath = path.join(jobDir, 'source.bin');
   let resolved = null;
@@ -523,7 +673,10 @@ export async function downloadAndPrepare(input, jobDir) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      resolved = await resolveAudio(input);
+      resolved = await resolveAudio({
+        ...input,
+        requireLossless: String(input.format).toLowerCase() === 'flac',
+      });
       const sourceUrl = assertAudioUrl(resolved.url);
       transfer = await fetchToFile(sourceUrl, sourcePath, {
         maxBytes: config.maxDownloadBytes,
@@ -531,6 +684,7 @@ export async function downloadAndPrepare(input, jobDir) {
         label: 'La fuente de audio',
       });
 
+      mark('descarga');
       const probe = await probeFile(sourcePath);
       const expected = input.expectedDurationSeconds || resolved.duration || 0;
       actual = probe.duration;
@@ -594,13 +748,15 @@ export async function downloadAndPrepare(input, jobDir) {
     throw new UpstreamError('No se pudo obtener el audio de la fuente.', 502);
   }
 
+  mark('sondeo');
   const sourceFormat = actualFormat;
   const outputFormat = input.outputFormat;
   const needsConversion = sourceFormat !== outputFormat;
 
   let lossless = null;
+  let integrity = null;
   if (outputFormat === 'flac') {
-    lossless = await analyzeFile(sourcePath, { deep: true });
+    lossless = await analyzeFile(sourcePath);
     const dudosoAceptado = lossless.verdict === 'high-cut' && Boolean(input.allowDoubtful);
     const integro = lossless.integrityOk !== false;
     if (lossless.verdict !== 'lossless' && !dudosoAceptado) {
@@ -629,6 +785,9 @@ export async function downloadAndPrepare(input, jobDir) {
         { integrityOk: false },
       );
     }
+    // La verificación de integridad decodifica el archivo entero: se lanza ya y
+    // se espera al final, en paralelo con la portada y la preparación.
+    integrity = verifyFlacIntegrity(sourcePath);
   }
   const wantsCover = input.embedMetadata && input.embedCover && Boolean(input.coverUrl);
   const needsWork = needsConversion || input.embedMetadata || wantsCover;
@@ -637,6 +796,7 @@ export async function downloadAndPrepare(input, jobDir) {
   let coverPath = '';
   let coverSize = { width: 0, height: 0 };
 
+  mark('verificacion');
   if (wantsCover) {
     try {
       coverPath = await fetchCover(input.coverUrl, jobDir);
@@ -666,6 +826,7 @@ export async function downloadAndPrepare(input, jobDir) {
     });
   }
 
+  mark('preparacion');
   const finalProbe = await probeFile(outputPath);
   const finalFormat = codecToAudioFormat(finalProbe);
   if (finalFormat !== outputFormat) {
@@ -681,15 +842,29 @@ export async function downloadAndPrepare(input, jobDir) {
     );
   }
 
+  if (integrity) {
+    const integro = await integrity;
+    if (lossless) lossless.integrityOk = integro;
+    if (!integro) {
+      throw new HttpError(
+        422,
+        'LOSSLESS_INTEGRITY_FAILED',
+        'El archivo FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide). No se entrega.',
+        { integrityOk: false },
+      );
+    }
+  }
+
   const stats = await fs.stat(outputPath);
   if (!stats.size) {
     throw new HttpError(502, 'EMPTY_FILE', 'El archivo preparado quedó vacío. Prueba otra calidad.');
   }
 
-  const baseName = input.title || 'flacplay-audio';
-  const prefix = input.artist && input.artist !== 'Artista no indicado' ? `${input.artist} - ` : '';
-  const filename = `${sanitizeFilename(`${prefix}${baseName}`)}.${outputFormat}`;
+  const filename = buildFilename(input, outputFormat);
 
+  console.log(
+    `[${new Date().toISOString()}] download_ready ${marks.join(' ')} total=${Date.now() - t0}ms size=${stats.size} work=${needsWork ? 1 : 0}`,
+  );
   return {
     path: outputPath,
     filename,
@@ -701,6 +876,7 @@ export async function downloadAndPrepare(input, jobDir) {
     actualBitrate: Math.round((finalProbe.bitRate || sourceProbe?.bitRate || 0) / 1000),
     requestedFormat: input.format,
     outputFormat,
+    sourcePlatform: resolved.sourcePlatform ?? input.platform,
     converted: needsConversion,
     hasCover: Boolean(coverPath),
     coverWidth: coverSize.width,

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { cached } from './cache.mjs';
 import { config } from './config.mjs';
 import { sniffAudioFormat } from './audio-format.mjs';
 
@@ -192,7 +193,7 @@ async function decodeSamples(file, seconds, offsetSeconds = 0) {
   }
 }
 
-async function verifyIntegrity(file) {
+export async function verifyFlacIntegrity(file) {
   if (!config.ffmpegPath) return false;
   try {
     const { stderr } = await execFileAsync(
@@ -234,7 +235,7 @@ export async function analyzeFile(file, { deep = false, headerBytes = null } = {
   }
   const cutoffHz = samples ? spectrumCutoff(samples, 44100) : 0;
   const juicio = judgeSpectrum({ codec, sampleRate: probe.sampleRate || 44100, cutoffHz });
-  const integrityOk = deep ? await verifyIntegrity(file) : null;
+  const integrityOk = deep ? await verifyFlacIntegrity(file) : null;
 
   return {
     ...probe,
@@ -248,7 +249,15 @@ export async function analyzeFile(file, { deep = false, headerBytes = null } = {
   };
 }
 
-export async function analyzeRemote(url, { maxBytes = 8 * 1024 * 1024 } = {}) {
+/**
+ * El mismo archivo se analiza al comprobar calidades y otra vez al descargarlo.
+ * Cachear por URL evita repetir la descarga de la muestra y el análisis espectral.
+ */
+export function analyzeRemote(url, options = {}) {
+  return cached(`spectrum:${url}`, config.cache.probeMs * 10, () => analyzeRemoteUncached(url, options));
+}
+
+async function analyzeRemoteUncached(url, { maxBytes = 8 * 1024 * 1024 } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'flacplay-lossless-'));
   const file = path.join(dir, 'muestra.bin');
   try {

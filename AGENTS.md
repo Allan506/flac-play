@@ -51,3 +51,26 @@ node_modules/ffprobe-static/bin/linux/x64/ffprobe -v error \
 ```
 
 Response headers `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Output-Format` and `X-FLACPlay-Verified` confirm the delivered format. `X-FLACPlay-Cover-Resolution` should be `1200x1200` for Kuwo covers and the original size (for example `2000x2000`) for NetEase.
+
+## Kuwo artist queries
+
+- Kuwo answers artist-style queries (`jay chou`, `周杰伦`) with `total > 0` and an empty `list`, because it matches an artist card instead of songs. `server/upstream.mjs` keeps `fallbackKeywords()` and `fetchSearchPage()`: when the first page is empty but `total > 0`, it retries the individual words (longest first, 1-character tokens and duplicates dropped, original case preserved). `tests/search-fallback.test.ts` covers the keyword builder.
+
+## UI conventions that already bit us
+
+- Modal titles live in `.modal-heading`, which owns its horizontal padding (`1.15rem`). Anything rendered as a direct child of `.modal-card` needs that padding itself, or the text hits the card edge on mobile.
+- Long upstream text (Kuwo album blurbs are Chinese and ~2 400 characters) is clamped with `.album-desc` (`-webkit-line-clamp: 4`) plus a "Ver descripción completa" toggle; `.album-hero` uses `align-items: start` so the cover stays visible next to tall copy.
+- Anchor scrolling goes through `scrollToId()`, so `#search` and `#catalog` carry `scroll-margin-top: 84px`; without it the sticky `.topbar` covers the section heading.
+- Checkboxes inside `.toggle-row` are sized and coloured with `accent-color: var(--accent)`; the row is `align-items: flex-start` so multi-line copy stays aligned with the box.
+- The displayed version has a single source: `package.json` → `/api/config` → `Footer`/`SettingsModal`. Do not hardcode it in a component again.
+
+## Mobile checks
+
+- Emulate with CDP: `Emulation.setDeviceMetricsOverride({ width: 390, height: 844, deviceScaleFactor: 2, mobile: true })`, then compare `document.documentElement.scrollWidth` with `innerWidth` (both must be 390) and screenshot the sheet, lyrics, album and download modals.
+- Downloads were verified with iPhone/Android user agents for FLAC (with and without metadata) and MP3 128/320. The payload needs `songid`, `time`, `sign` and `expectedDurationSeconds` from the same search result; a hardcoded id fails with `400 UPSTREAM_UNAVAILABLE` because the duration check rejects it.
+
+## Publishing the frontend
+
+- GitHub Pages serves this repository from the `gh-pages` branch (Settings → Pages → *Deploy from a branch*, `/ (root)`), not from Actions. `npm run publish:pages` builds with `VITE_BASE=/flac-play/` and `VITE_API_BASE=https://flac-play.onrender.com`, copies `index.html` to `404.html`, adds `.nojekyll` and force-pushes `dist/` to `gh-pages`.
+- `.github/workflows/pages.yml` repeats that on every push to `main`. Committing a workflow file needs a token with the `workflow` scope, and the job needs *Settings* → *Actions* → *General* → *Workflow permissions* set to read and write; without both, publish from a workstation with `npm run publish:pages`.
+- Pushing to `main` also redeploys the Render API (auto-deploy in `render.yaml`), which is where `/api/config` reads the version the footer shows.

@@ -56,7 +56,12 @@ export function AlbumModal({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [descOpen, setDescOpen] = useState(false);
   const requestRef = useRef(0);
+
+  useEffect(() => {
+    setDescOpen(false);
+  }, [albumId]);
 
   const loadPage = useCallback(
     async (nextPage: number, mode: 'replace' | 'append') => {
@@ -174,10 +179,17 @@ export function AlbumModal({
     >
       <div className="album-hero">
         <div className="album-hero-art">
-          {cover ? <img src={cover} alt="" /> : <MusicIcon size={34} />}
+          {cover ? <img src={cover} alt="" referrerPolicy="no-referrer" /> : <MusicIcon size={34} />}
         </div>
         <div className="album-hero-copy">
-          <p>{info?.description || 'Sin descripción disponible en la fuente.'}</p>
+          <p className={descOpen ? 'album-desc is-open' : 'album-desc'}>
+            {info?.description || 'Sin descripción disponible en la fuente.'}
+          </p>
+          {(info?.description?.length ?? 0) > 240 ? (
+            <button type="button" className="text-button" onClick={() => setDescOpen(!descOpen)}>
+              {descOpen ? 'Ver menos' : 'Ver descripción completa'}
+            </button>
+          ) : null}
         </div>
       </div>
 

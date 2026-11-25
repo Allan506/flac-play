@@ -237,6 +237,12 @@ async function resolveNeteaseAudio({ songid, format, bitrate, requireLossless })
     if (!requireLossless || directo.format === 'flac') return directo;
   }
 
+  return cached(`wyy-twin:${songid}:${format}:${bitrate}:${requireLossless ? 1 : 0}`, TRACK_CACHE_MS, () =>
+    resolveNeteaseTwin({ songid, format, bitrate, requireLossless }),
+  );
+}
+
+async function resolveNeteaseTwin({ songid, format, bitrate, requireLossless }) {
   const meta = await neteaseTrackMeta(songid);
   if (!meta) {
     throw new UpstreamError('No se pudo identificar esta pista de NetEase.', 502);
@@ -274,7 +280,24 @@ async function resolveNeteaseAudio({ songid, format, bitrate, requireLossless })
       422,
     );
   }
-  return audio;
+  return { ...audio, sourcePlatform: 'kuwo', twin: true };
+}
+
+async function fetchSearchPage(platform, keyword, page) {
+  const body = await requestUpstream('/api/search', { platform, keyword, page });
+  const data = body?.data ?? {};
+  const list = Array.isArray(data.list) ? data.list.map(normalizeTrack).filter(Boolean) : [];
+  return { list, total: Number(data.total) || list.length, page };
+}
+
+// Kuwo responde con total > 0 y lista vacía cuando la consulta coincide con la
+// ficha de un artista. Reintentar con una sola palabra devuelve sus canciones.
+export function fallbackKeywords(keyword) {
+  const tokens = String(keyword)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && token !== keyword);
+  return [...new Set(tokens)].sort((a, b) => b.length - a.length).slice(0, 2);
 }
 
 export async function searchTracks({ platform, keyword, page }) {
@@ -285,14 +308,18 @@ export async function searchTracks({ platform, keyword, page }) {
     return { list, total: nativo.total, page };
   }
 
-  const body = await requestUpstream('/api/search', { platform, keyword, page });
-  const data = body?.data ?? {};
-  const list = Array.isArray(data.list) ? data.list.map(normalizeTrack).filter(Boolean) : [];
-  return {
-    list,
-    total: Number(data.total) || list.length,
-    page,
-  };
+  const first = await fetchSearchPage(platform, keyword, page);
+  const candidates = first.list.length ? [] : fallbackKeywords(keyword);
+  if (!candidates.length) return first;
+
+  for (const candidate of candidates) {
+    const retry = await fetchSearchPage(platform, candidate, page);
+    if (retry.list.length) {
+      console.warn(`[search_fallback] platform=${platform} keyword="${keyword}" retry="${candidate}"`);
+      return retry;
+    }
+  }
+  return first;
 }
 
 export async function resolveAudio({ platform, songid, format, bitrate, time, sign, requireLossless = false }) {
@@ -322,6 +349,7 @@ export async function resolveAudio({ platform, songid, format, bitrate, time, si
       bitrate: String(data.bitrate ?? bitrate),
       duration: toSeconds(data.duration),
       songid: String(data.songid ?? songid),
+      sourcePlatform: platform,
     };
     if (!requireLossless || audio.format === 'flac') return audio;
     ultimo = audio;

@@ -20,6 +20,7 @@ export function MiniPlayer({ playerTrack, playing, loading, onToggle, onExpand }
           <img
             src={playerTrack.track.pic_url}
             alt=""
+            referrerPolicy="no-referrer"
             onError={() => setCoverFailed(true)}
           />
         ) : (

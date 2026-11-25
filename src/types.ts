@@ -71,6 +71,7 @@ export interface ProbeResult {
   contentLength: number;
   expectedDurationSeconds: number;
   likelyPreview: boolean;
+  sourcePlatform?: Platform;
 }
 
 export type LosslessVerdict = 'lossless' | 'high-cut' | 'transcoded' | 'not-flac' | 'unknown';
@@ -99,6 +100,7 @@ export interface QualityCheck extends Quality {
   likelyPreview: boolean;
   spectrum?: LosslessAnalysis | null;
   losslessVerified?: boolean;
+  sourcePlatform?: Platform;
   error: string;
 }
 

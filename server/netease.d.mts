@@ -1,9 +1,12 @@
 export function eapiParams(url: string, payload: Record<string, unknown>): string;
 
+export function levelChain(format: string, bitrate?: string | number): string[];
+
+export function detectFormat(item: unknown, fallback?: string): 'flac' | 'mp3';
+
 export function mapNeteaseSong(
   song: unknown,
   privilege?: { maxbr?: number },
-  options?: { lossless?: boolean },
 ): {
   id: string;
   name: string;
@@ -54,4 +57,12 @@ export function neteaseAudio(input: {
   songid: string;
   format: string;
   bitrate: string;
-}): Promise<{ url: string; format: string; bitrate: string; duration: number; songid: string } | null>;
+}): Promise<{
+  url: string;
+  format: string;
+  bitrate: string;
+  duration: number;
+  songid: string;
+  level: string;
+  sourcePlatform: string;
+} | null>;

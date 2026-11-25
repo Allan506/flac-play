@@ -480,7 +480,7 @@ export function DownloadModal({
     >
       <div className="download-summary">
         <div className="download-cover">
-          {track.pic_url ? <img src={track.pic_url} alt="" /> : <LockIcon size={24} />}
+          {track.pic_url ? <img src={track.pic_url} alt="" referrerPolicy="no-referrer" /> : <LockIcon size={24} />}
         </div>
         <div>
           <p className="download-kicker">ELIGE LA CALIDAD DE ORIGEN</p>
@@ -517,6 +517,11 @@ export function DownloadModal({
                   <span className="quality-option-meta">
                     {item.format === 'flac' ? 'sin pérdida' : `${item.bitrate} kb/s`}
                     {item.size ? ` · ${item.size}` : ''}
+                    {check?.sourcePlatform && check.sourcePlatform !== platform ? (
+                      <span className="quality-catalog">
+                        vía {check.sourcePlatform === 'kuwo' ? 'Kuwo' : 'NetEase'}
+                      </span>
+                    ) : null}
                   </span>
                   <span className={`quality-status quality-status-${itemStatus}`}>
                     {itemStatus === 'mismatch' && check

@@ -68,6 +68,7 @@ export function TrackRow({
             alt=""
             loading="lazy"
             decoding="async"
+            referrerPolicy="no-referrer"
             onError={() => setCoverFailed(true)}
           />
         ) : (
@@ -150,12 +151,24 @@ export function TrackRow({
         </div>
 
         <div className="track-action-links">
-          <button type="button" className="row-action" onClick={() => onLyrics(track)}>
-            <LyricsIcon size={14} /> Letra
+          <button
+            type="button"
+            className="row-action"
+            onClick={() => onLyrics(track)}
+            aria-label={`Ver la letra de ${track.name}`}
+          >
+            <LyricsIcon size={14} />
+            <span className="row-action-label">Letra</span>
           </button>
           {track.album_id ? (
-            <button type="button" className="row-action" onClick={() => onAlbum(track)}>
-              <AlbumIcon size={14} /> Álbum
+            <button
+              type="button"
+              className="row-action"
+              onClick={() => onAlbum(track)}
+              aria-label={`Ver el álbum de ${track.name}`}
+            >
+              <AlbumIcon size={14} />
+              <span className="row-action-label">Álbum</span>
             </button>
           ) : null}
           <button
@@ -163,13 +176,15 @@ export function TrackRow({
             className="row-action"
             onClick={() => onDownload(track)}
             disabled={!canPlay}
+            aria-label={`Descargar ${track.name}`}
             title={
               !canPlay && strictLossless
                 ? 'Esta pista no publica FLAC: desactiva «Solo FLAC verificado» en Ajustes para bajarla en MP3.'
                 : undefined
             }
           >
-            <DownloadIcon size={14} /> Descarga
+            <DownloadIcon size={14} />
+            <span className="row-action-label">Descarga</span>
           </button>
           <a
             className="row-action row-action-link"

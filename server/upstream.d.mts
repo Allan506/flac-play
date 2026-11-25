@@ -58,3 +58,5 @@ export function fetchAlbum(input: {
   page: number;
   size: number;
 }): Promise<unknown>;
+
+export function fallbackKeywords(keyword: string): string[];

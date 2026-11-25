@@ -86,6 +86,7 @@ export function PlayerCard({
           <img
             src={track.pic_url}
             alt={`Portada de ${track.album_name || track.name}`}
+            referrerPolicy="no-referrer"
             onError={() => setCoverFailed(true)}
           />
         ) : (

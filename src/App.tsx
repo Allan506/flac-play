@@ -653,7 +653,7 @@ export default function App() {
         </div>
       </main>
 
-      <Footer />
+      <Footer version={config?.version} />
 
       {!isDesktop && playerTrack ? (
         <MiniPlayer

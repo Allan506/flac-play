@@ -59,6 +59,20 @@ export function toPublicError(error) {
     };
   }
 
+  // body-parser marca sus fallos con type/status: un JSON mal formado es un
+  // error del cliente, no del servidor.
+  if (error?.type === 'entity.parse.failed' || error?.type === 'entity.too.large') {
+    return {
+      status: error.status ?? 400,
+      body: {
+        error: {
+          code: 'INVALID_BODY',
+          message: 'El cuerpo de la petición no es un JSON válido o es demasiado grande.',
+        },
+      },
+    };
+  }
+
   return {
     status: 500,
     body: {

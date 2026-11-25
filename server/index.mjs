@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { cached } from './cache.mjs';
 import { config } from './config.mjs';
@@ -14,6 +15,8 @@ import {
   checkQualities,
   createJobDir,
   downloadAndPrepare,
+  openAudioStream,
+  streamDirect,
   missingTools,
   probeSource,
   removeJobDir,
@@ -242,27 +245,26 @@ api.post(
     res.on('close', cleanup);
     req.on('aborted', cleanup);
 
-    try {
-      const result = await downloadAndPrepare(input, jobDir);
+    const sendHeaders = (result) => {
       const asciiName = result.filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '');
       const encodedName = encodeURIComponent(result.filename);
-
       res.setHeader('Content-Type', result.mime);
-      res.setHeader('Content-Length', String(result.size));
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
       );
       res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-FLACPlay-Requested-Format', result.requestedFormat);
+      res.setHeader('X-FLACPlay-Requested-Format', result.requestedFormat ?? result.outputFormat);
       res.setHeader('X-FLACPlay-Output-Format', result.outputFormat);
       res.setHeader('X-FLACPlay-Source-Format', result.sourceFormat);
-      res.setHeader('X-FLACPlay-Source-Codec', result.sourceCodec);
+      res.setHeader('X-FLACPlay-Source-Codec', result.sourceCodec ?? '');
+      res.setHeader('X-FLACPlay-Source-Catalog', result.sourcePlatform ?? '');
       res.setHeader('X-FLACPlay-Actual-Bitrate', String(result.actualBitrate));
       res.setHeader('X-FLACPlay-Verified', result.verified ? '1' : '0');
       res.setHeader('X-FLACPlay-Actual-Duration', String(Math.round(result.actualDuration)));
       res.setHeader('X-FLACPlay-Converted', result.converted ? '1' : '0');
       res.setHeader('X-FLACPlay-Cover', result.hasCover ? '1' : '0');
+      res.setHeader('X-FLACPlay-Direct', result.direct ? '1' : '0');
       if (result.hasCover && result.coverWidth && result.coverHeight) {
         res.setHeader('X-FLACPlay-Cover-Resolution', `${result.coverWidth}x${result.coverHeight}`);
       }
@@ -276,6 +278,27 @@ api.post(
         res.setHeader('X-FLACPlay-Lossless-Bits', String(result.lossless.bits ?? 0));
         res.setHeader('X-FLACPlay-Lossless-Sample-Rate', String(result.lossless.sampleRate ?? 0));
       }
+    };
+
+    try {
+      const direct = input.embedMetadata || input.embedCover
+        ? null
+        : await streamDirect(input).catch(() => null);
+
+      if (direct) {
+        const upstream = await openAudioStream(direct.url).catch(() => null);
+        if (upstream?.ok && upstream.body) {
+          sendHeaders(direct);
+          res.setHeader('Content-Length', String(direct.size));
+          Readable.fromWeb(upstream.body).pipe(res);
+          return;
+        }
+        await upstream?.body?.cancel().catch(() => {});
+      }
+
+      const result = await downloadAndPrepare(input, jobDir);
+      sendHeaders(result);
+      res.setHeader('Content-Length', String(result.size));
 
       const stream = createReadStream(result.path);
       stream.on('error', next);

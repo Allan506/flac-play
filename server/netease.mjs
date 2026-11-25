@@ -54,10 +54,17 @@ async function eapi(url, payload) {
   return body;
 }
 
-function qualityList(privilege, lossless) {
+const LOSSLESS_MAXBR = 900_000;
+
+/**
+ * NetEase publica el bitrate máximo del tema en `maxbr`. A partir de 900 kb/s la
+ * pista existe en FLAC, aunque la entrega dependa de la cuenta: sin sesión el
+ * resolvedor busca la misma grabación en Kuwo, que sí entrega FLAC sin cuenta.
+ */
+function qualityList(privilege) {
   const maxbr = Number(privilege?.maxbr ?? 0);
   const list = [];
-  if (lossless && maxbr >= 900_000) {
+  if (maxbr >= LOSSLESS_MAXBR) {
     list.push({ level: 'lossless', bitrate: '2000', format: 'flac', size: '' });
   }
   if (maxbr >= 320_000) {
@@ -67,8 +74,9 @@ function qualityList(privilege, lossless) {
   return list;
 }
 
-export function mapNeteaseSong(song, privilege, options = {}) {
+export function mapNeteaseSong(song, privilege) {
   if (!song?.id) return null;
+  const priv = privilege ?? song.privilege ?? {};
   const album = song.al ?? song.album ?? {};
   const artists = song.ar ?? song.artists ?? [];
   return {
@@ -80,12 +88,12 @@ export function mapNeteaseSong(song, privilege, options = {}) {
     album_id: album.id ? String(album.id) : '',
     pic_url: toHttps(album.picUrl ?? ''),
     duration: toSeconds(song.dt ? song.dt / 1000 : 0),
-    minfo: qualityList(privilege ?? song.privilege, options.lossless ?? Boolean(config.neteaseCookie)),
+    minfo: qualityList(priv),
     link: `https://music.163.com/song?id=${song.id}`,
     time: 0,
     sign: '',
-    hasHQ: Number(privilege?.maxbr ?? 0) >= 320_000,
-    hasSQ: Boolean(options.lossless ?? config.neteaseCookie) && Number(privilege?.maxbr ?? 0) >= 900_000,
+    hasHQ: Number(priv.maxbr ?? 0) >= 320_000,
+    hasSQ: Number(priv.maxbr ?? 0) >= LOSSLESS_MAXBR,
   };
 }
 
@@ -148,23 +156,40 @@ export async function neteaseSongDetail(songid) {
   return mapNeteaseSong(song, body?.privileges?.[0]);
 }
 
-const LEVELS = { '2000': 'lossless', flac: 'lossless', '320': 'exhigh', '128': 'standard' };
+export function levelChain(format, bitrate) {
+  if (String(format).toLowerCase() === 'flac') return ['hires', 'lossless'];
+  return Number(bitrate) >= 320 ? ['exhigh', 'standard'] : ['standard'];
+}
+
+export function detectFormat(item, fallback) {
+  const type = String(item?.type ?? '').toLowerCase();
+  if (type.includes('flac')) return 'flac';
+  if (type.includes('mp3') || type.includes('mpeg')) return 'mp3';
+  const url = String(item?.url ?? '').toLowerCase();
+  if (url.includes('.flac')) return 'flac';
+  if (url.includes('.mp3')) return 'mp3';
+  return String(fallback).toLowerCase() === 'flac' ? 'flac' : 'mp3';
+}
 
 export async function neteaseAudio({ songid, format, bitrate }) {
-  const level = LEVELS[String(bitrate)] ?? LEVELS[String(format)] ?? 'exhigh';
-  const body = await eapi('/api/song/enhance/player/url/v1', {
-    ids: `[${Number(songid)}]`,
-    level,
-    encodeType: format === 'flac' ? 'flac' : 'mp3',
-    csrf_token: '',
-  });
-  const item = body?.data?.[0];
-  if (!item?.url) return null;
-  return {
-    url: toHttps(item.url),
-    format: String(item.type ?? format ?? 'mp3').toLowerCase().includes('flac') ? 'flac' : 'mp3',
-    bitrate: String(Math.round(Number(item.br ?? 0) / 1000) || bitrate || ''),
-    duration: toSeconds(item.time ? item.time / 1000 : 0),
-    songid: String(songid),
-  };
+  for (const level of levelChain(format, bitrate)) {
+    const body = await eapi('/api/song/enhance/player/url/v1', {
+      ids: `[${Number(songid)}]`,
+      level,
+      encodeType: String(format).toLowerCase() === 'flac' ? 'flac' : 'mp3',
+      csrf_token: '',
+    });
+    const item = body?.data?.[0];
+    if (!item?.url) continue;
+    return {
+      url: toHttps(item.url),
+      format: detectFormat(item, format),
+      bitrate: String(Math.round(Number(item.br ?? 0) / 1000) || bitrate || ''),
+      duration: toSeconds(item.time ? item.time / 1000 : 0),
+      songid: String(songid),
+      level,
+      sourcePlatform: 'netease',
+    };
+  }
+  return null;
 }
