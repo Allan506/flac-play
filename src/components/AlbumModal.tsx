@@ -27,6 +27,7 @@ interface AlbumModalProps {
   onPlay: (track: Track, quality: Quality) => void;
   onLyrics: (track: Track) => void;
   onDownload: (track: Track) => void;
+  strictLossless?: boolean;
 }
 
 const PAGE_SIZE = 20;
@@ -45,6 +46,7 @@ export function AlbumModal({
   onPlay,
   onLyrics,
   onDownload,
+  strictLossless = false,
 }: AlbumModalProps) {
   const [info, setInfo] = useState<AlbumInfo | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -123,7 +125,11 @@ export function AlbumModal({
   }, [open, albumId, loadPage]);
 
   const cover = info?.pic_url || fallbackCover;
-  const firstPlayable = tracks.find((track) => track.minfo.length > 0);
+  const firstPlayable = tracks.find((track) =>
+    strictLossless
+      ? track.minfo.some((item) => item.format === 'flac')
+      : track.minfo.length > 0,
+  );
 
   return (
     <Modal
@@ -145,7 +151,9 @@ export function AlbumModal({
                 type="button"
                 className="primary-button"
                 onClick={() => {
-                  const quality = bestQuality(firstPlayable);
+                  const quality = strictLossless
+                    ? (firstPlayable.minfo.find((item) => item.format === 'flac') ?? null)
+                    : bestQuality(firstPlayable);
                   if (quality) onPlay(firstPlayable, quality);
                 }}
               >
@@ -195,7 +203,9 @@ export function AlbumModal({
           </div>
           <ol className="album-track-list">
             {tracks.map((track, index) => {
-              const quality = bestQuality(track);
+              const quality = strictLossless
+                ? (track.minfo.find((item) => item.format === 'flac') ?? null)
+                : bestQuality(track);
               const active = currentTrackId === track.id;
               return (
                 <li key={`${track.id}-${index}`} className={`album-track-row ${active ? 'is-active' : ''}`}>

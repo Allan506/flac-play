@@ -73,6 +73,20 @@ export interface ProbeResult {
   likelyPreview: boolean;
 }
 
+export type LosslessVerdict = 'lossless' | 'high-cut' | 'transcoded' | 'not-flac' | 'unknown';
+
+export interface LosslessAnalysis {
+  codec: string;
+  sampleRate: number;
+  bits: number;
+  cutoffHz: number;
+  limitHz: number;
+  ratio: number;
+  verdict: LosslessVerdict;
+  label: string;
+  integrityOk: boolean | null;
+}
+
 export interface QualityCheck extends Quality {
   available: boolean;
   sourceFormat: ActualAudioFormat;
@@ -83,12 +97,16 @@ export interface QualityCheck extends Quality {
   contentLength: number;
   expectedDurationSeconds: number;
   likelyPreview: boolean;
+  spectrum?: LosslessAnalysis | null;
+  losslessVerified?: boolean;
   error: string;
 }
 
 export interface QualityCheckResult {
   qualities: QualityCheck[];
   recommended: { format: AudioFormat; bitrate: string } | null;
+  recommendedVerified?: boolean;
+  losslessVerified?: boolean;
   allPreview: boolean;
 }
 
@@ -137,6 +155,8 @@ export interface ParsedLyrics {
 export interface DownloadOptions {
   quality: Quality;
   outputFormat?: AudioFormat;
+  requireLossless?: boolean;
+  allowDoubtful?: boolean;
   embedMetadata: boolean;
   embedCover: boolean;
 }

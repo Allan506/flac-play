@@ -164,7 +164,7 @@ api.post(
   '/resolve',
   asyncRoute(async (req, res) => {
     const input = parseBody(resolveSchema, req.body);
-    const key = `resolve:${input.platform}:${input.songid}:${input.format}:${input.bitrate}:${input.time ?? ''}:${input.sign ?? ''}`;
+    const key = `resolve:${input.platform}:${input.songid}:${input.format}:${input.bitrate}:${input.time ?? ''}:${input.sign ?? ''}:${input.requireLossless ? 'lossless' : 'auto'}`;
     const data = await cached(key, config.cache.resolveMs, () => resolveAudio(input));
     res.json({ data });
   }),
@@ -253,6 +253,15 @@ api.post(
         res.setHeader('X-FLACPlay-Cover-Resolution', `${result.coverWidth}x${result.coverHeight}`);
       }
       res.setHeader('X-FLACPlay-Preview', '0');
+      if (result.lossless) {
+        res.setHeader('X-FLACPlay-Lossless-Verdict', result.lossless.verdict ?? '');
+        res.setHeader('X-FLACPlay-Lossless-Label', result.lossless.label ?? '');
+        res.setHeader('X-FLACPlay-Lossless-Cutoff-Hz', String(result.lossless.cutoffHz ?? 0));
+        res.setHeader('X-FLACPlay-Lossless-Limit-Hz', String(result.lossless.limitHz ?? 0));
+        res.setHeader('X-FLACPlay-Lossless-Integrity', result.lossless.integrityOk === false ? '0' : '1');
+        res.setHeader('X-FLACPlay-Lossless-Bits', String(result.lossless.bits ?? 0));
+        res.setHeader('X-FLACPlay-Lossless-Sample-Rate', String(result.lossless.sampleRate ?? 0));
+      }
 
       const stream = createReadStream(result.path);
       stream.on('error', next);

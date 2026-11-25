@@ -1,11 +1,12 @@
 import type { AppConfig } from '../types';
 import { Modal } from './Modal';
-import { SettingsIcon, SparkIcon } from './Icons';
+import { LockIcon, SettingsIcon, SparkIcon } from './Icons';
 
 export interface Preferences {
   reducedMotion: boolean;
   autoplayNext: boolean;
   saveHistory: boolean;
+  strictLossless: boolean;
 }
 
 interface SettingsModalProps {
@@ -45,7 +46,12 @@ export function SettingsModal({
               type="button"
               className="secondary-button"
               onClick={() =>
-                onChange({ reducedMotion: false, autoplayNext: true, saveHistory: true })
+                onChange({
+                  reducedMotion: false,
+                  autoplayNext: true,
+                  saveHistory: true,
+                  strictLossless: false,
+                })
               }
             >
               Restablecer
@@ -91,6 +97,28 @@ export function SettingsModal({
               role="switch"
               checked={preferences.autoplayNext}
               onChange={(event) => patch({ autoplayNext: event.target.checked })}
+            />
+            <span aria-hidden="true" />
+          </span>
+        </label>
+
+        <label className="settings-row">
+          <span className="settings-icon">
+            <LockIcon size={17} />
+          </span>
+          <span className="settings-copy">
+            <strong>Solo FLAC verificado</strong>
+            <small>
+              Reproduce y descarga únicamente FLAC con espectro completo comprobado. Kuwo y NetEase
+              entregan FLAC real o se rechaza la pista.
+            </small>
+          </span>
+          <span className="switch">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={preferences.strictLossless}
+              onChange={(event) => patch({ strictLossless: event.target.checked })}
             />
             <span aria-hidden="true" />
           </span>

@@ -5,10 +5,24 @@ export function upstreamAppErrorMessage(
 
 export function normalizeTrack(raw: unknown): unknown;
 
+export interface KuwoCandidate {
+  id: string;
+  name: string;
+  duration: number;
+  minfo?: { format: string; bitrate: string }[];
+}
+
+export function rankKuwoMatches(
+  meta: { name: string; artist?: string; duration?: number },
+  candidates: KuwoCandidate[],
+  options?: { requireLossless?: boolean },
+): KuwoCandidate[];
+
 export function pickKuwoMatch(
   meta: { name: string; artist?: string; duration?: number },
-  candidates: { id: string; name: string; duration: number }[],
-): { id: string; name: string; duration: number } | null;
+  candidates: KuwoCandidate[],
+  options?: { requireLossless?: boolean },
+): KuwoCandidate | null;
 
 export function chooseQuality(
   minfo: { format: string; bitrate: string }[],

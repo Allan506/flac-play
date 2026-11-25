@@ -27,6 +27,7 @@ interface TrackRowProps {
   onLyrics: (track: Track) => void;
   onAlbum: (track: Track) => void;
   onDownload: (track: Track) => void;
+  strictLossless?: boolean;
 }
 
 export function TrackRow({
@@ -40,11 +41,14 @@ export function TrackRow({
   onLyrics,
   onAlbum,
   onDownload,
+  strictLossless = false,
 }: TrackRowProps) {
   const [coverFailed, setCoverFailed] = useState(false);
-  const bestQuality = track.minfo[0];
-  const canPlay = track.minfo.length > 0;
-  const displayQualities = track.minfo.slice(0, 3);
+  const flacQualities = track.minfo.filter((quality) => quality.format === 'flac');
+  const available = strictLossless ? flacQualities : track.minfo;
+  const bestQuality = available[0];
+  const canPlay = available.length > 0;
+  const displayQualities = available.slice(0, 3);
 
   const play = () => {
     if (bestQuality) onPlay(track, bestQuality);
@@ -139,7 +143,9 @@ export function TrackRow({
               </button>
             ))
           ) : (
-            <span className="quality-empty">Sin audio</span>
+            <span className="quality-empty">
+              {strictLossless ? 'Sin FLAC verificado' : 'Sin audio'}
+            </span>
           )}
         </div>
 
@@ -157,6 +163,11 @@ export function TrackRow({
             className="row-action"
             onClick={() => onDownload(track)}
             disabled={!canPlay}
+            title={
+              !canPlay && strictLossless
+                ? 'Esta pista no publica FLAC: desactiva «Solo FLAC verificado» en Ajustes para bajarla en MP3.'
+                : undefined
+            }
           >
             <DownloadIcon size={14} /> Descarga
           </button>

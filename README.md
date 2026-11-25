@@ -143,13 +143,30 @@ La comprobación es **orientativa**: el servidor lee los primeros 64 KB, detecta
 
 La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate`, `X-FLACPlay-Verified`, `X-FLACPlay-Cover` y, cuando hay portada, `X-FLACPlay-Cover-Resolution` (por ejemplo `1200x1200`).
 
+### FLAC auténtico
+
+Un FLAC puede ser sin pérdida de verdad o un archivo con pérdida recodificado (por ejemplo un MP3 320 renombrado). El formato y la duración no lo revelan, así que el servidor mide el espectro con `ffmpeg` y compara el corte real con el límite teórico de la frecuencia de muestreo (22,1 kHz en 44,1 kHz).
+
+`POST /api/check` y `POST /api/download` aceptan dos campos nuevos:
+
+| Campo | Efecto |
+| --- | --- |
+| `requireLossless` | Rechaza la calidad FLAC si el análisis no confirma espectro completo. En `/api/check` la marca como no disponible; en `/api/download` responde `422 LOSSLESS_NOT_VERIFIED`. |
+| `allowDoubtful` | Solo para el veredicto intermedio: acepta el archivo cuando el corte está entre el 86 % y el 95 % del límite y la integridad es correcta. Sin este campo el servidor no entrega el archivo. |
+
+Veredictos posibles: `lossless` (espectro completo), `high-cut` (corte alto compatible con una recodificación desde MP3 320), `transcoded` (corte bajo, claramente con pérdida) y `unknown` (no se pudo medir; nunca se presenta como verificado).
+
+La descarga añade `X-FLACPlay-Lossless-Verdict`, `X-FLACPlay-Lossless-Label`, `X-FLACPlay-Lossless-Cutoff-Hz`, `X-FLACPlay-Lossless-Limit-Hz`, `X-FLACPlay-Lossless-Integrity`, `X-FLACPlay-Lossless-Bits` y `X-FLACPlay-Lossless-Sample-Rate`. Si el FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide), responde `422 LOSSLESS_INTEGRITY_FAILED`.
+
+En la interfaz, el ajuste **Solo FLAC verificado** (Ajustes, se guarda en `localStorage`) filtra la búsqueda y los álbumes a pistas con FLAC, reproduce solo en FLAC y muestra en el diálogo de descarga el corte medido antes de bajar el archivo. Cuando el veredicto es dudoso, el botón se convierte en una confirmación explícita; el aviso final nunca afirma que el archivo sea sin pérdida si el análisis no lo confirma.
+
 ## Pruebas
 
 ```bash
 npm test
 ```
 
-Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, y la selección de portadas en máxima resolución.
+Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico y la selección de candidatos en modo estricto.
 
 ## Limitaciones conocidas
 
