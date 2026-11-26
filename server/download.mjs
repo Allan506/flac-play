@@ -16,7 +16,7 @@ import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { fetchWithRetry, httpFetch } from './http.mjs';
-import { analyzeFile, analyzeRemote, verifyFlacIntegrity, verdictLabel } from './lossless.mjs';
+import { analyzeFile, analyzeRemote, evaluateFlacDelivery, verifyFlacIntegrity } from './lossless.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, audioRequestHeaders, sanitizeFilename, sleep } from './utils.mjs';
 
@@ -460,19 +460,6 @@ async function fetchAudioPrefix(url, maxBytes = 65_536) {
   return response;
 }
 
-function losslessMessage(analysis) {
-  const khz = (hz) => `${((hz ?? 0) / 1000).toFixed(1).replace('.', ',')} kHz`;
-  const corte = khz(analysis.cutoffHz);
-  const limite = khz(analysis.limitHz);
-  if (analysis.verdict === 'high-cut') {
-    return `El FLAC se corta en ${corte} de ${limite} posibles: no se puede garantizar que no venga de un MP3 320. Confírmalo para descargarlo igualmente.`;
-  }
-  if (analysis.verdict === 'transcoded') {
-    return `El FLAC se corta en ${corte} de ${limite}: viene de audio con pérdida recodificado. No se entrega como FLAC sin pérdida.`;
-  }
-  return `${verdictLabel(analysis.verdict)}: no se puede verificar como FLAC real.`;
-}
-
 export async function probeSource(input) {
   let lastResult = null;
 
@@ -586,8 +573,15 @@ export async function checkQualities(input) {
         (item.actualFormat ?? item.format) === item.format,
     )
     .sort((a, b) => rank(b) - rank(a));
-  const verified = full.find((item) => item.losslessVerified) ?? null;
-  const recommended = verified ?? full[0] ?? null;
+  // Un FLAC sin espectro completo no se puede entregar: si el catálogo ofrece
+  // otra calidad utilizable, se recomienda esa en lugar de una descarga fallida.
+  const entregable = (item) =>
+    (item.actualFormat ?? item.format) !== 'flac' ||
+    !item.spectrum ||
+    item.spectrum.verdict === 'lossless';
+  const utilizables = full.filter(entregable);
+  const verified = utilizables.find((item) => item.losslessVerified) ?? null;
+  const recommended = verified ?? utilizables[0] ?? null;
 
   return {
     qualities: checks,
@@ -743,33 +737,9 @@ export async function downloadAndPrepare(input, jobDir) {
   let integrity = null;
   if (outputFormat === 'flac') {
     lossless = await analyzeFile(sourcePath);
-    const dudosoAceptado = lossless.verdict === 'high-cut' && Boolean(input.allowDoubtful);
-    const integro = lossless.integrityOk !== false;
-    if (lossless.verdict !== 'lossless' && !dudosoAceptado) {
-      throw new HttpError(
-        422,
-        'LOSSLESS_NOT_VERIFIED',
-        losslessMessage(lossless),
-        {
-          verdict: lossless.verdict,
-          label: lossless.label,
-          cutoffHz: lossless.cutoffHz,
-          limitHz: lossless.limitHz,
-          ratio: lossless.ratio,
-          integrityOk: lossless.integrityOk,
-          sampleRate: lossless.sampleRate,
-          bits: lossless.bits,
-          allowDoubtful: Boolean(input.allowDoubtful),
-        },
-      );
-    }
-    if (!integro) {
-      throw new HttpError(
-        422,
-        'LOSSLESS_INTEGRITY_FAILED',
-        'El archivo FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide). No se entrega.',
-        { integrityOk: false },
-      );
+    const entrega = evaluateFlacDelivery(lossless);
+    if (!entrega.deliverable) {
+      throw new HttpError(422, entrega.code, entrega.message, entrega.details);
     }
     // La verificación de integridad decodifica el archivo entero: se lanza ya y
     // se espera al final, en paralelo con la portada y la preparación.
@@ -826,6 +796,19 @@ export async function downloadAndPrepare(input, jobDir) {
         codec: finalProbe.codec,
       },
     );
+  }
+
+  if (outputFormat === 'flac' && outputPath !== sourcePath) {
+    const preparado = await analyzeFile(outputPath);
+    const entregaFinal = evaluateFlacDelivery(preparado);
+    if (!entregaFinal.deliverable) {
+      throw new HttpError(
+        422,
+        entregaFinal.code,
+        `El archivo preparado no es FLAC sin pérdida: ${entregaFinal.message}`,
+        entregaFinal.details,
+      );
+    }
   }
 
   if (integrity) {

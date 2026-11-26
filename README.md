@@ -165,18 +165,24 @@ Los tres comparten la misma verificación que Kuwo y NetEase: `ffprobe` confirma
 
 Un FLAC puede ser sin pérdida de verdad o un archivo con pérdida recodificado (por ejemplo un MP3 320 renombrado). El formato y la duración no lo revelan, así que el servidor mide el espectro con `ffmpeg` y compara el corte real con el límite teórico de la frecuencia de muestreo (22,1 kHz en 44,1 kHz).
 
-`POST /api/check` y `POST /api/download` aceptan dos campos nuevos:
+**Ningún archivo con extensión `.flac` sale del servidor si no es FLAC sin pérdida.** La regla es única y no tiene excepciones ni interruptores: `evaluateFlacDelivery()` exige veredicto `lossless` sobre el archivo de origen y repite el análisis sobre el archivo ya preparado, después de incrustar metadatos y portada. Si cualquiera de las dos medidas falla, la descarga se corta con `422 LOSSLESS_NOT_VERIFIED` y el archivo nunca llega al navegador.
 
-| Campo | Efecto |
-| --- | --- |
-| `requireLossless` | Rechaza la calidad FLAC si el análisis no confirma espectro completo. En `/api/check` la marca como no disponible; en `/api/download` responde `422 LOSSLESS_NOT_VERIFIED`. |
-| `allowDoubtful` | Solo para el veredicto intermedio: acepta el archivo cuando el corte está entre el 86 % y el 95 % del límite y la integridad es correcta. Sin este campo el servidor no entrega el archivo. |
+Cómo se mide:
 
-Veredictos posibles: `lossless` (espectro completo), `high-cut` (corte alto compatible con una recodificación desde MP3 320), `transcoded` (corte bajo, claramente con pérdida) y `unknown` (no se pudo medir; nunca se presenta como verificado).
+- Se decodifican hasta tres ventanas de 12 s (15 %, 50 % y 85 % de la pista) y se toma el **corte máximo**: una pasada tranquila no puede marcar como recortado un FLAC íntegro, y un archivo con pérdida no puede superar su techo en ninguna ventana.
+- El corte es la frecuencia más alta con contenido audible por encima de `pico − 85 dB`, con la media móvil de tres bins.
+- Un archivo se considera `lossless` sólo si el corte llega al **97 %** del límite del formato (21,4 kHz de 22,05 kHz en 44,1 kHz). Los codificadores con pérdida medidos en este proyecto (MP3 128, 192, 256 y 320 de LAME) se quedan en el 92-94 %, así que el margen es de casi 0,7 kHz.
+- Además se comprueba la firma MD5 del `STREAMINFO` decodificando el archivo completo: un FLAC corrupto se rechaza con `422 LOSSLESS_INTEGRITY_FAILED` aunque el espectro sea perfecto.
+
+Veredictos posibles: `lossless` (espectro completo), `high-cut` (corte entre el 86 % y el 97 % del límite: compatible con una recodificación con pérdida), `transcoded` (corte por debajo del 86 %, claramente con pérdida), `not-flac` (los bytes no son FLAC) y `unknown` (no se pudo medir). Sólo `lossless` se entrega.
+
+Consecuencia asumida: un máster legítimo pero muy limitado de banda (por ejemplo un FLAC con contenido sólo hasta 15 kHz) tampoco se entrega como FLAC, porque es indistinguible de un archivo recodificado con pérdida. En esos casos la interfaz explica el corte medido y ofrece las calidades MP3 del catálogo.
+
+`POST /api/check` sigue aceptando `requireLossless` para filtrar la lista de calidades antes de descargar; en `/api/download` la exigencia es siempre la misma, se pida o no.
 
 La descarga añade `X-FLACPlay-Lossless-Verdict`, `X-FLACPlay-Lossless-Label`, `X-FLACPlay-Lossless-Cutoff-Hz`, `X-FLACPlay-Lossless-Limit-Hz`, `X-FLACPlay-Lossless-Integrity`, `X-FLACPlay-Lossless-Bits` y `X-FLACPlay-Lossless-Sample-Rate`. Si el FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide), responde `422 LOSSLESS_INTEGRITY_FAILED`.
 
-En la interfaz, el ajuste **Solo FLAC verificado** (Ajustes, se guarda en `localStorage`) filtra la búsqueda y los álbumes a pistas con FLAC, reproduce solo en FLAC y muestra en el diálogo de descarga el corte medido antes de bajar el archivo. Cuando el veredicto es dudoso, el botón se convierte en una confirmación explícita; el aviso final nunca afirma que el archivo sea sin pérdida si el análisis no lo confirma.
+En la interfaz, el ajuste **Solo FLAC verificado** (Ajustes, se guarda en `localStorage`) filtra la búsqueda y los álbumes a pistas con FLAC, reproduce solo en FLAC y muestra en el diálogo de descarga el corte medido antes de bajar el archivo. Una calidad FLAC cuyo análisis no llega al espectro completo aparece como `No sin pérdida` con el corte medido y no se puede descargar; no hay botón para forzarla.
 
 ## GitHub Pages
 
@@ -196,6 +202,8 @@ npm test
 ```
 
 Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico, la selección de candidatos en modo estricto, los adaptadores de los tres catálogos abiertos y la validación de identificadores (los catálogos abiertos aceptan rutas y títulos; Kuwo y NetEase exigen identificadores numéricos).
+
+`tests/flac-lossless-enforcement.test.ts` genera audio real con `ffmpeg` y comprueba la garantía de arriba: ruido blanco de banda completa en FLAC (se acepta), el mismo audio pasado por MP3 128 y MP3 320 antes de guardarse como FLAC (se rechaza), un MP3 sólo renombrado a `.flac` (se rechaza por bytes y por códec), audio reducido a 8 kHz y reescalado a 44,1 kHz (se rechaza) y un FLAC de 96 kHz (se acepta). Si `ffmpeg` no está disponible, esas pruebas se omiten y el resto de la suite sigue corriendo.
 
 Para comprobar los catálogos reales, con el servidor en marcha:
 

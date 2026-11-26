@@ -113,14 +113,16 @@ export function judgeSpectrum({ codec, sampleRate, cutoffHz }) {
   }
   const limite = Math.min(sampleRate > 0 ? sampleRate / 2 : 22050, 22050);
   const ratio = limite > 0 ? cutoffHz / limite : 0;
-  if (ratio >= 0.95) return { verdict: 'lossless', ratio, limitHz: limite };
+  // 0.97 exige contenido audible a menos de 0.7 kHz del límite: los
+  // codificadores con pérdida medidos (MP3 128-320) se quedan en 0.92-0.94.
+  if (ratio >= 0.97) return { verdict: 'lossless', ratio, limitHz: limite };
   if (ratio >= 0.86) return { verdict: 'high-cut', ratio, limitHz: limite };
   return { verdict: 'transcoded', ratio, limitHz: limite };
 }
 
 export const VERDICT_LABELS = {
   lossless: 'FLAC íntegro con espectro completo',
-  'high-cut': 'FLAC con corte alto, compatible con un MP3 320 recodificado',
+  'high-cut': 'FLAC con el espectro recortado, compatible con audio recodificado con pérdida',
   transcoded: 'FLAC recodificado desde audio con pérdida',
   'not-flac': 'No es FLAC',
   unknown: 'Sin datos suficientes',
@@ -230,19 +232,31 @@ export async function analyzeFile(file, { deep = false, headerBytes = null } = {
     };
   }
 
-  const offset = probe.duration > DECODE_SECONDS * 2 ? probe.duration * 0.25 : 0;
-  let samples = await decodeSamples(file, DECODE_SECONDS, offset);
-  if ((!samples || samples.length < 44100) && offset > 0) {
-    samples = await decodeSamples(file, DECODE_SECONDS, 0);
+  // Varias ventanas: una pasada tranquila puede parecer recortada y un archivo
+  // con pérdida nunca supera su techo en ninguna. Se queda el máximo medido.
+  const offsets =
+    probe.duration > DECODE_SECONDS * 3
+      ? [probe.duration * 0.15, probe.duration * 0.5, probe.duration * 0.85]
+      : probe.duration > DECODE_SECONDS * 2
+        ? [probe.duration * 0.25, probe.duration * 0.75]
+        : [0];
+  const muestras = await Promise.all(offsets.map((offset) => decodeSamples(file, DECODE_SECONDS, offset)));
+  let cutoffHz = 0;
+  for (const samples of muestras) {
+    if (!samples || samples.length < 44100) continue;
+    cutoffHz = Math.max(cutoffHz, spectrumCutoff(samples, 44100));
   }
-  const cutoffHz = samples ? spectrumCutoff(samples, 44100) : 0;
-  const juicio = judgeSpectrum({ codec, sampleRate: probe.sampleRate || 44100, cutoffHz });
+  // Un origen de 11 kHz analizado a 44,1 kHz puede marcar imágenes por encima de
+  // su propio Nyquist: se recorta al límite del formato para que la razón no pase de 1.
+  const limiteFormato = Math.min(probe.sampleRate > 0 ? probe.sampleRate / 2 : 22050, 22050);
+  const corteAjustado = limiteFormato > 0 ? Math.min(cutoffHz, limiteFormato) : cutoffHz;
+  const juicio = judgeSpectrum({ codec, sampleRate: probe.sampleRate || 44100, cutoffHz: corteAjustado });
   const integrityOk = deep ? await verifyFlacIntegrity(file) : null;
 
   return {
     ...probe,
     container,
-    cutoffHz: Math.round(cutoffHz),
+    cutoffHz: Math.round(corteAjustado),
     limitHz: Math.round(juicio.limitHz),
     ratio: Number(juicio.ratio.toFixed(3)),
     verdict: juicio.verdict,
@@ -278,6 +292,77 @@ async function analyzeRemoteUncached(url, { maxBytes = 8 * 1024 * 1024 } = {}) {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+}
+
+function khz(hz) {
+  return `${((hz ?? 0) / 1000).toFixed(1).replace('.', ',')} kHz`;
+}
+
+function rejectionMessage(analysis) {
+  const corte = khz(analysis.cutoffHz);
+  const limite = khz(analysis.limitHz);
+  if (analysis.verdict === 'high-cut') {
+    return `El FLAC se corta en ${corte} de ${limite} posibles: el espectro no llega al límite del formato y encaja con audio recodificado con pérdida. No se entrega como FLAC sin pérdida.`;
+  }
+  if (analysis.verdict === 'transcoded') {
+    return `El FLAC se corta en ${corte} de ${limite}: viene de audio con pérdida recodificado. No se entrega como FLAC sin pérdida.`;
+  }
+  if (analysis.verdict === 'not-flac') {
+    return 'El archivo no es un FLAC real. No se entrega con extensión .flac.';
+  }
+  return `No se pudo medir el espectro del archivo (${verdictLabel(analysis.verdict)}), así que no se puede confirmar que sea FLAC sin pérdida.`;
+}
+
+/**
+ * Regla única de entrega: un archivo con extensión .flac sólo sale del servidor
+ * si el espectro llega al límite del formato y la integridad MD5 es correcta.
+ * No hay opción para forzar lo contrario.
+ */
+export function evaluateFlacDelivery(analysis) {
+  const details = analysis
+    ? {
+        verdict: analysis.verdict ?? 'unknown',
+        label: verdictLabel(analysis.verdict),
+        cutoffHz: analysis.cutoffHz ?? 0,
+        limitHz: analysis.limitHz ?? 0,
+        ratio: analysis.ratio ?? 0,
+        sampleRate: analysis.sampleRate ?? 0,
+        bits: analysis.bits ?? 0,
+        integrityOk: analysis.integrityOk ?? null,
+      }
+    : { verdict: 'unknown', label: verdictLabel('unknown') };
+
+  if (!analysis) {
+    return {
+      deliverable: false,
+      code: 'LOSSLESS_NOT_VERIFIED',
+      message: 'No se pudo analizar el archivo, así que no se entrega como FLAC sin pérdida.',
+      details,
+    };
+  }
+  if (analysis.integrityOk === false) {
+    return {
+      deliverable: false,
+      code: 'LOSSLESS_INTEGRITY_FAILED',
+      message:
+        'El FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide). No se entrega.',
+      details,
+    };
+  }
+  if (analysis.verdict !== 'lossless') {
+    return {
+      deliverable: false,
+      code: 'LOSSLESS_NOT_VERIFIED',
+      message: rejectionMessage(analysis),
+      details,
+    };
+  }
+  return {
+    deliverable: true,
+    code: null,
+    message: `FLAC sin pérdida verificado (${khz(analysis.cutoffHz)} de ${khz(analysis.limitHz)}).`,
+    details,
+  };
 }
 
 export function isLosslessVerified(analysis) {

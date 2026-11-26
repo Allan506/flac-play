@@ -109,7 +109,6 @@ const downloadSchemaBase = z.object({
   embedMetadata: z.boolean().default(true),
   embedCover: z.boolean().default(true),
   requireLossless: z.boolean().default(false),
-  allowDoubtful: z.boolean().default(false),
 });
 
 const probeSchemaBase = z.object({

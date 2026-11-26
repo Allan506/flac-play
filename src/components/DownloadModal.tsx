@@ -40,7 +40,14 @@ interface Progress {
   total: number;
 }
 
-type CheckStatus = 'checking' | 'full' | 'preview' | 'unavailable' | 'mismatch' | 'unknown';
+type CheckStatus =
+  | 'checking'
+  | 'full'
+  | 'preview'
+  | 'unavailable'
+  | 'rejected'
+  | 'mismatch'
+  | 'unknown';
 
 function actualFormatLabel(format: ActualAudioFormat | undefined): string {
   if (format === 'flac') return 'FLAC';
@@ -73,6 +80,9 @@ function checkStatus(check: QualityCheck | null, checking: boolean): CheckStatus
   if (check) {
     if (check.likelyPreview) return 'preview';
     if (!check.available) return 'unavailable';
+    if (check.format === 'flac' && check.spectrum && check.spectrum.verdict !== 'lossless') {
+      return 'rejected';
+    }
     if (check.formatMismatch && check.actualFormat !== 'flac') return 'mismatch';
     return 'full';
   }
@@ -84,6 +94,7 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
   full: 'Completa',
   preview: 'Posible vista previa',
   unavailable: 'No disponible',
+  rejected: 'No sin pérdida',
   mismatch: 'Formato distinto',
   unknown: 'Sin comprobar',
 };
@@ -116,7 +127,6 @@ export function DownloadModal({
     limitHz: number;
     label: string;
   } | null>(null);
-  const [allowDoubtful, setAllowDoubtful] = useState(false);
   const [formatMismatch, setFormatMismatch] = useState<{
     actualFormat: ActualAudioFormat;
     actualBitrate: number;
@@ -138,7 +148,8 @@ export function DownloadModal({
       (check) => check.format === quality?.format && check.bitrate === quality?.bitrate,
     ) ?? null;
   const status = checkStatus(selectedCheck, checking);
-  const selectedUnavailable = status === 'unavailable';
+  const selectedUnavailable = status === 'unavailable' || status === 'rejected';
+  const selectedRejected = status === 'rejected' ? selectedCheck : null;
   const selectedPreview = status === 'preview';
   const allUnavailable = checks.length > 0 && checks.every((check) => !check.available);
   const selectedMismatchCheck =
@@ -191,7 +202,6 @@ export function DownloadModal({
     setError('');
     setPreviewRejected(false);
     setLosslessRejected(null);
-    setAllowDoubtful(false);
     setFormatMismatch(null);
     setProgress({ received: 0, total: 0 });
     setDownloading(false);
@@ -263,7 +273,7 @@ export function DownloadModal({
     setFormatMismatch(null);
   };
 
-  const startDownload = async (overrideOutput?: AudioFormat, forceDoubtful = false) => {
+  const startDownload = async (overrideOutput?: AudioFormat) => {
     if (!quality || downloading || selectedUnavailable) return;
     const outputFormat = overrideOutput ?? actualOutputFormat ?? quality.format;
     const controller = new AbortController();
@@ -281,7 +291,6 @@ export function DownloadModal({
           quality,
           outputFormat,
           requireLossless: strictLossless || outputFormat === 'flac',
-          allowDoubtful: forceDoubtful || allowDoubtful,
           embedMetadata,
           embedCover: embedCover && hasCover,
         },
@@ -450,9 +459,11 @@ export function DownloadModal({
                     ? ' · formato real confirmado'
                     : advisoryMismatch
                       ? ` · la muestra puede ser ${actualFormatLabel(mismatchActual)}`
-                      : selectedPreview
-                        ? ' · comprobación orientativa'
-                        : ''
+                      : selectedRejected
+                        ? ' · no verificado como sin pérdida'
+                        : selectedPreview
+                          ? ' · comprobación orientativa'
+                          : ''
                 }`
               : 'La fuente no publicó calidades compatibles.'}
           </span>
@@ -471,9 +482,11 @@ export function DownloadModal({
                 ? 'Preparando…'
                 : confirmedMismatch
                   ? 'Descargar MP3 real'
-                  : selectedPreview
-                    ? 'Intentar descarga'
-                    : 'Descargar'}
+                  : selectedRejected
+                    ? 'No se entrega'
+                    : selectedPreview
+                      ? 'Intentar descarga'
+                      : 'Descargar'}
             </button>
           </div>
         </div>
@@ -516,7 +529,11 @@ export function DownloadModal({
                     {item.format === 'flac' ? 'FLAC' : `MP3 ${item.bitrate}`}
                   </span>
                   <span className="quality-option-meta">
-                    {item.format === 'flac' ? 'sin pérdida' : `${item.bitrate} kb/s`}
+                    {item.format === 'flac'
+                      ? itemStatus === 'rejected'
+                        ? 'espectro recortado'
+                        : 'sin pérdida'
+                      : `${item.bitrate} kb/s`}
                     {item.size ? ` · ${item.size}` : ''}
                     {check?.sourcePlatform && check.sourcePlatform !== platform ? (
                       <span className="quality-catalog">
@@ -527,7 +544,9 @@ export function DownloadModal({
                   <span className={`quality-status quality-status-${itemStatus}`}>
                     {itemStatus === 'mismatch' && check
                       ? `Muestra ${actualFormatLabel(check.actualFormat)}`
-                      : STATUS_LABEL[itemStatus]}
+                      : itemStatus === 'rejected' && check?.spectrum
+                        ? `Corte ${formatKhz(check.spectrum.cutoffHz)}`
+                        : STATUS_LABEL[itemStatus]}
                   </span>
                   {recommendedMatches(item) ? (
                     <span className="quality-recommended">Recomendada</span>
@@ -741,21 +760,21 @@ export function DownloadModal({
         </p>
       ) : null}
 
-      {losslessRejected && losslessRejected.verdict === 'high-cut' ? (
-        <button
-          type="button"
-          className="secondary-button lossless-accept"
-          onClick={() => {
-            setAllowDoubtful(true);
-            setLosslessRejected(null);
-            setError('');
-            void startDownload(undefined, true);
-          }}
-          disabled={downloading}
-        >
-          Descargar igualmente ({formatKhz(losslessRejected.cutoffHz)} de{' '}
-          {formatKhz(losslessRejected.limitHz)})
-        </button>
+      {selectedRejected?.spectrum ? (
+        <p className="download-note">
+          Esta calidad llega a {formatKhz(selectedRejected.spectrum.cutoffHz)} de{' '}
+          {formatKhz(selectedRejected.spectrum.limitHz)}: el contenido no ocupa todo el
+          espectro y encaja con audio recodificado con pérdida, así que no se entrega como
+          FLAC. Elige otra calidad, otra pista u otro catálogo.
+        </p>
+      ) : null}
+
+      {losslessRejected ? (
+        <p className="download-note">
+          La verificación mide {formatKhz(losslessRejected.cutoffHz)} de{' '}
+          {formatKhz(losslessRejected.limitHz)} posibles. Un FLAC sólo se entrega con el
+          espectro completo: elige otra calidad, otra pista u otro catálogo.
+        </p>
       ) : null}
 
       {previewRejected || selectedPreview ? (

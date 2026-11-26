@@ -160,7 +160,6 @@ export interface DownloadOptions {
   quality: Quality;
   outputFormat?: AudioFormat;
   requireLossless?: boolean;
-  allowDoubtful?: boolean;
   embedMetadata: boolean;
   embedCover: boolean;
 }

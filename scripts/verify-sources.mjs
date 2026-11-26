@@ -94,14 +94,26 @@ for (const platform of PLATFORMS) {
       expectedDurationSeconds: track.duration,
       embedMetadata: true,
       embedCover: true,
-      allowDoubtful: true,
     }),
     signal: AbortSignal.timeout(300_000),
   });
 
   if (!download.ok) {
     const text = await download.text();
-    report(platform, 'download', false, text.slice(0, 120));
+    // Rechazar un FLAC sin espectro completo es el comportamiento correcto:
+    // cuenta como comprobación superada, no como fallo del catálogo.
+    let code = '';
+    let message = text.slice(0, 120);
+    try {
+      const body = JSON.parse(text);
+      code = body?.error?.code ?? '';
+      message = body?.error?.message ?? message;
+    } catch {
+      /* la respuesta no era JSON */
+    }
+    const rechazoCorrecto =
+      code === 'LOSSLESS_NOT_VERIFIED' || code === 'LOSSLESS_INTEGRITY_FAILED';
+    report(platform, 'download', rechazoCorrecto, rechazoCorrecto ? `rechazado · ${message}` : message);
     continue;
   }
 

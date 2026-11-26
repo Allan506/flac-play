@@ -38,3 +38,23 @@ export function analyzeRemote(
 ): Promise<LosslessAnalysis | null>;
 
 export function isLosslessVerified(analysis: LosslessAnalysis | null | undefined): boolean;
+
+export interface FlacDeliveryDecision {
+  deliverable: boolean;
+  code: 'LOSSLESS_NOT_VERIFIED' | 'LOSSLESS_INTEGRITY_FAILED' | null;
+  message: string;
+  details: {
+    verdict: LosslessAnalysis['verdict'];
+    label: string;
+    cutoffHz?: number;
+    limitHz?: number;
+    ratio?: number;
+    sampleRate?: number;
+    bits?: number;
+    integrityOk?: boolean | null;
+  };
+}
+
+export function evaluateFlacDelivery(
+  analysis: LosslessAnalysis | null | undefined,
+): FlacDeliveryDecision;

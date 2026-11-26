@@ -183,7 +183,6 @@ export function downloadTrack(
       embedMetadata: options.embedMetadata,
       embedCover: options.embedCover,
       requireLossless: Boolean(options.requireLossless),
-      allowDoubtful: Boolean(options.allowDoubtful),
     }),
   });
 }

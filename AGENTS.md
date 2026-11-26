@@ -18,6 +18,8 @@
 - Never rename or transcode MP3/AAC to FLAC to satisfy a FLAC request. Return `422 SOURCE_FORMAT_MISMATCH` instead.
 - The upstream can return a `.flac` URL whose content is MP3, or a `.mp3` URL whose content is FLAC. Trust the bytes, not the URL or `Content-Type`.
 - FLAC downloads retry the resolve up to three times because the upstream alternates variants between requests.
+- `evaluateFlacDelivery(analysis)` in `server/lossless.mjs` is the only gate for `.flac` output and it has no override: `verdict === 'lossless'` plus `integrityOk !== false`. `downloadAndPrepare` runs it on the source and again on the prepared file; `streamDirect` refuses any FLAC whose remote probe is not `lossless`. Do not add a "download anyway" flag — a lossy file labelled `.flac` is the one thing the project promises never to ship.
+- The spectrum check samples up to three 12 s windows (15/50/85 %) and keeps the maximum cutoff; `lossless` needs ≥ 97 % of the format limit. LAME MP3 128-320 measured 92-94 % in this environment, so the margin is ~0.7 kHz. `tests/flac-lossless-enforcement.test.ts` builds real MP3-in-FLAC fixtures with ffmpeg and asserts they are rejected.
 - `server/audio-format.d.mts` provides TypeScript types for the `.mjs` module used by tests.
 - `server/covers.mjs` upgrades covers to the largest available source: Kuwo 1200px with 500/300/original fallbacks, NetEase original without `?param=`.
 
