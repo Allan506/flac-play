@@ -15,6 +15,7 @@ import {
   safeFilename,
   sourceTrackUrl,
 } from '../lib/format';
+import { platformName, platformOverline } from '../lib/platforms';
 import { Modal } from './Modal';
 import {
   AlertIcon,
@@ -436,7 +437,7 @@ export function DownloadModal({
     <Modal
       open={open}
       onClose={downloading ? () => abortRef.current?.abort() : onClose}
-      overline={`FLAC PLAY · DESCARGA · ${platform === 'kuwo' ? 'KUWO' : 'NETEASE'}`}
+      overline={`FLAC PLAY · DESCARGA · ${platformOverline(platform)}`}
       title={track.name}
       description={`${track.artist}${track.album_name ? ` · ${track.album_name}` : ''} · ${formatDuration(track.duration)}`}
       className="download-modal"
@@ -519,7 +520,7 @@ export function DownloadModal({
                     {item.size ? ` · ${item.size}` : ''}
                     {check?.sourcePlatform && check.sourcePlatform !== platform ? (
                       <span className="quality-catalog">
-                        vía {check.sourcePlatform === 'kuwo' ? 'Kuwo' : 'NetEase'}
+                        vía {platformName((check.sourcePlatform as Platform) ?? platform)}
                       </span>
                     ) : null}
                   </span>

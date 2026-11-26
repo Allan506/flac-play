@@ -22,6 +22,7 @@ import {
   removeJobDir,
 } from './download.mjs';
 import { HttpError, toPublicError } from './errors.mjs';
+import { NATIVE_CATALOGS } from './sources/index.mjs';
 import { fetchAlbum, fetchLyrics, resolveAudio, searchTracks } from './upstream.mjs';
 import {
   albumSchema,
@@ -138,8 +139,9 @@ api.get('/config', (_req, res) => {
     data: {
       version,
       catalogs: [
-        { value: 'kuwo', name: 'Kuwo', initial: 'K' },
-        { value: 'wyy', name: 'NetEase', initial: 'W' },
+        { value: 'kuwo', name: 'Kuwo', initial: 'K', lyrics: true, albums: true },
+        { value: 'wyy', name: 'NetEase', initial: 'W', lyrics: true, albums: true },
+        ...NATIVE_CATALOGS,
       ],
       pageSize: 20,
       maxKeywordLength: 120,
@@ -290,7 +292,13 @@ api.post(
         if (upstream?.ok && upstream.body) {
           sendHeaders(direct);
           res.setHeader('Content-Length', String(direct.size));
-          Readable.fromWeb(upstream.body).pipe(res);
+          const source = Readable.fromWeb(upstream.body);
+          source.on('error', (error) => {
+            if (res.headersSent) res.destroy(error);
+            else next(error);
+          });
+          res.on('close', () => source.destroy());
+          source.pipe(res);
           return;
         }
         await upstream?.body?.cancel().catch(() => {});
@@ -391,8 +399,12 @@ process.on('unhandledRejection', (reason) => {
   console.error(`[${new Date().toISOString()}] unhandled_rejection`, reason);
 });
 
+const RECOVERABLE_ERRORS = new Set(['ECONNRESET', 'EPIPE', 'ERR_STREAM_PREMATURE_CLOSE', 'TimeoutError', 'AbortError']);
+
 process.on('uncaughtException', (error) => {
   console.error(`[${new Date().toISOString()}] uncaught_exception`, error);
+  // Cortes de red o timeouts de un cliente concreto no deben tumbar el servicio.
+  if (RECOVERABLE_ERRORS.has(error?.code) || RECOVERABLE_ERRORS.has(error?.name)) return;
   setTimeout(() => process.exit(1), 100).unref();
 });
 

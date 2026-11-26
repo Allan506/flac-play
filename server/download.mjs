@@ -15,10 +15,10 @@ import {
 import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
-import { httpFetch } from './http.mjs';
+import { fetchWithRetry, httpFetch } from './http.mjs';
 import { analyzeFile, analyzeRemote, verifyFlacIntegrity, verdictLabel } from './lossless.mjs';
 import { resolveAudio } from './upstream.mjs';
-import { assertAudioUrl, assertCoverUrl, sanitizeFilename, sleep } from './utils.mjs';
+import { assertAudioUrl, assertCoverUrl, audioRequestHeaders, sanitizeFilename, sleep } from './utils.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,21 +69,7 @@ export async function removeJobDir(dir) {
 }
 
 function requestHeaders(url) {
-  const headers = {
-    'User-Agent': config.userAgent,
-    Accept: '*/*',
-  };
-  try {
-    const host = new URL(url).hostname;
-    if (host.endsWith('.kuwo.cn') || host.endsWith('.kuwo.com')) {
-      headers.Referer = 'https://www.kuwo.cn/';
-    } else if (host.endsWith('.126.net') || host.endsWith('.126.com')) {
-      headers.Referer = 'https://music.163.com/';
-    }
-  } catch {
-    // The URL is validated by assertAudioUrl before this helper is used.
-  }
-  return headers;
+  return audioRequestHeaders(url);
 }
 
 const PARALLEL_MIN_BYTES = 6 * 1024 * 1024;
@@ -189,7 +175,7 @@ async function fetchToFileSequential(url, destination, { maxBytes, timeoutMs, la
   let received = 0;
 
   try {
-    const response = await httpFetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: requestHeaders(url),
       redirect: 'follow',
       signal: controller.signal,
@@ -451,7 +437,7 @@ async function fetchAudioPrefix(url, maxBytes = 65_536) {
   let response = null;
   for (const range of [null, `bytes=0-${maxBytes - 1}`]) {
     try {
-      response = await httpFetch(url, {
+      response = await fetchWithRetry(url, {
         method: 'GET',
         headers: {
           ...requestHeaders(url),
@@ -645,7 +631,7 @@ export async function streamDirect(input) {
 }
 
 export function openAudioStream(url) {
-  return httpFetch(url, {
+  return fetchWithRetry(url, {
     headers: requestHeaders(url),
     redirect: 'follow',
     signal: AbortSignal.timeout(config.downloadTimeoutMs),

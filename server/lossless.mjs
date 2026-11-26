@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { cached } from './cache.mjs';
 import { config } from './config.mjs';
 import { sniffAudioFormat } from './audio-format.mjs';
+import { fetchWithRetry, httpFetch } from './http.mjs';
+import { audioRequestHeaders } from './utils.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -261,8 +263,9 @@ async function analyzeRemoteUncached(url, { maxBytes = 8 * 1024 * 1024 } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'flacplay-lossless-'));
   const file = path.join(dir, 'muestra.bin');
   try {
-    const response = await fetch(url, {
-      headers: { Range: `bytes=0-${maxBytes - 1}` },
+    const response = await fetchWithRetry(url, {
+      headers: { ...audioRequestHeaders(url), Range: `bytes=0-${maxBytes - 1}` },
+      redirect: 'follow',
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok && response.status !== 206) return null;

@@ -1550,13 +1550,20 @@ main {
   transform: translateX(-50%);
   max-width: min(560px, calc(100vw - 2rem));
   padding: 0.75rem 1.1rem;
-  border-radius: var(--pill);
+  border-radius: 20px;
   border: 1px solid var(--line-strong);
   background: rgba(12, 14, 19, 0.94);
   backdrop-filter: blur(16px);
   box-shadow: var(--shadow);
   font-size: 0.86rem;
   animation: toast-in 260ms var(--ease);
+}
+
+.toast p {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  line-height: 1.45;
 }
 
 @keyframes toast-in {

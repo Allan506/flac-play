@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Platform, Quality, Track } from '../types';
+import { platformHasLyrics, platformName } from '../lib/platforms';
 import {
   formatDuration,
   formatQuality,
@@ -151,15 +152,17 @@ export function TrackRow({
         </div>
 
         <div className="track-action-links">
-          <button
-            type="button"
-            className="row-action"
-            onClick={() => onLyrics(track)}
-            aria-label={`Ver la letra de ${track.name}`}
-          >
-            <LyricsIcon size={14} />
-            <span className="row-action-label">Letra</span>
-          </button>
+          {platformHasLyrics(platform) ? (
+            <button
+              type="button"
+              className="row-action"
+              onClick={() => onLyrics(track)}
+              aria-label={`Ver la letra de ${track.name}`}
+            >
+              <LyricsIcon size={14} />
+              <span className="row-action-label">Letra</span>
+            </button>
+          ) : null}
           {track.album_id ? (
             <button
               type="button"
@@ -191,7 +194,7 @@ export function TrackRow({
             href={sourceTrackUrl(platform, track)}
             target="_blank"
             rel="noreferrer"
-            aria-label={`Abrir ${track.name} en ${platform === 'kuwo' ? 'Kuwo' : 'NetEase'}`}
+            aria-label={`Abrir ${track.name} en ${platformName(platform)}`}
           >
             <ExternalIcon size={14} />
             <span className="sr-only">Abrir en la fuente</span>

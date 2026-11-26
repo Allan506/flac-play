@@ -20,6 +20,7 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import { defaultFilters, countActiveFilters, filterAndSortTracks } from './lib/filters';
 import { bestQuality, formatDuration } from './lib/format';
+import { isPlatform } from './lib/platforms';
 import type {
   AppConfig,
   FilterState,
@@ -31,10 +32,13 @@ import type {
 } from './types';
 
 const FALLBACK_CONFIG: AppConfig = {
-  version: '2.0.0',
+  version: '2.3.0',
   catalogs: [
-    { value: 'kuwo', name: 'Kuwo', initial: 'K' },
-    { value: 'wyy', name: 'NetEase', initial: 'W' },
+    { value: 'kuwo', name: 'Kuwo', initial: 'K', lyrics: true, albums: true },
+    { value: 'wyy', name: 'NetEase', initial: 'W', lyrics: true, albums: true },
+    { value: 'archive', name: 'Internet Archive', initial: 'A', lyrics: false, albums: true },
+    { value: 'jamendo', name: 'Jamendo', initial: 'J', lyrics: false, albums: false },
+    { value: 'commons', name: 'Commons', initial: 'C', lyrics: false, albums: false },
   ],
   pageSize: 20,
   maxKeywordLength: 120,
@@ -63,7 +67,8 @@ interface Target {
 
 function readInitialState() {
   const params = new URLSearchParams(window.location.search);
-  const catalog: Platform = params.get('catalog') === 'wyy' ? 'wyy' : 'kuwo';
+  const catalogParam = params.get('catalog');
+  const catalog: Platform = isPlatform(catalogParam) ? catalogParam : 'kuwo';
   const query = (params.get('q') ?? '').trim().slice(0, 120);
   const page = Math.max(1, Number(params.get('page')) || 1);
   return { catalog, query, page };
@@ -530,6 +535,7 @@ export default function App() {
   const playerCard = (
     <PlayerCard
       playerTrack={playerTrack}
+      platform={playerTrack?.platform ?? null}
       playing={player.playing}
       loading={player.loading}
       currentTime={player.currentTime}

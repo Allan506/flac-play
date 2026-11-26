@@ -1,6 +1,6 @@
 {
   "name": "flac-play",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "Buscador de música de alta fidelidad para los catálogos de Kuwo y NetEase.",
@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start:supervised": "bash scripts/serve-prod.sh",
-    "publish:pages": "bash scripts/publish-pages.sh"
+    "publish:pages": "bash scripts/publish-pages.sh",
+    "verify:sources": "node scripts/verify-sources.mjs"
   },
   "dependencies": {
     "compression": "^1.7.5",

@@ -1,5 +1,6 @@
 import { cached } from './cache.mjs';
 import { config } from './config.mjs';
+import { nativeSource } from './sources/index.mjs';
 import { UpstreamError } from './errors.mjs';
 import { httpFetch } from './http.mjs';
 import {
@@ -301,6 +302,9 @@ export function fallbackKeywords(keyword) {
 }
 
 export async function searchTracks({ platform, keyword, page }) {
+  const openSource = nativeSource(platform);
+  if (openSource) return openSource.search({ keyword, page });
+
   if (platform === 'wyy' && config.neteaseNative) {
     const nativo = await searchNetease({ keyword, page });
     const list = nativo.list.map(normalizeTrack).filter(Boolean);
@@ -323,6 +327,18 @@ export async function searchTracks({ platform, keyword, page }) {
 }
 
 export async function resolveAudio({ platform, songid, format, bitrate, time, sign, requireLossless = false }) {
+  const openSource = nativeSource(platform);
+  if (openSource) {
+    const audio = await openSource.resolve({ songid, format, bitrate, time });
+    if (requireLossless && audio.format !== 'flac') {
+      throw new UpstreamError(
+        `La fuente solo entrega ${audio.format.toUpperCase()} para esta pista. No se reproduce en modo sin pérdida.`,
+        422,
+      );
+    }
+    return audio;
+  }
+
   if (platform === 'wyy' && config.neteaseNative) {
     return resolveNeteaseAudio({ songid, format, bitrate, requireLossless });
   }
@@ -363,6 +379,10 @@ export async function resolveAudio({ platform, songid, format, bitrate, time, si
 }
 
 export async function fetchLyrics({ platform, songid, time, sign }) {
+  if (nativeSource(platform)) {
+    throw new UpstreamError('Este catálogo abierto no publica letras sincronizadas.', 404);
+  }
+
   if (platform === 'wyy' && config.neteaseNative) {
     const letra = await neteaseLyrics({ songid });
     if (letra.trim()) return letra.replace(/^\uFEFF/, '').trim();
@@ -383,6 +403,14 @@ export async function fetchLyrics({ platform, songid, time, sign }) {
 }
 
 export async function fetchAlbum({ platform, id, page, size }) {
+  const openSource = nativeSource(platform);
+  if (openSource) {
+    if (!openSource.album) {
+      throw new UpstreamError('Este catálogo no agrupa sus pistas en álbumes.', 404);
+    }
+    return openSource.album({ id, page, size });
+  }
+
   if (platform === 'wyy' && config.neteaseNative) {
     const nativo = await neteaseAlbum({ id, page, size });
     const list = nativo.list.map(normalizeTrack).filter(Boolean);

@@ -1,6 +1,8 @@
 # FLAC Play
 
-Buscador y reproductor de música con interfaz en español para los catálogos de **Kuwo** y **NetEase**. Permite buscar, escuchar, leer la letra, consultar el álbum y preparar descargas en FLAC o MP3.
+Buscador y reproductor de música con interfaz en español para cinco catálogos: **Kuwo** y **NetEase**, más los archivos abiertos **Internet Archive**, **Jamendo** y **Wikimedia Commons**. Permite buscar, escuchar, leer la letra (solo Kuwo y NetEase), consultar el álbum y preparar descargas en FLAC o MP3.
+
+Los catálogos abiertos se resuelven en el propio servidor, sin depender de la API de Kuwo: cada adaptador (`server/sources/`) consulta la API pública correspondiente, filtra los archivos que no son FLAC y devuelve la misma forma de pista que los catálogos originales, de modo que la interfaz y la verificación funcionan igual en los cinco.
 
 El proyecto incluye un frontend React/Vite y un servidor Express que actúa como proxy de la API de origen, resuelve las URLs de audio, comprueba el formato real y la duración con `ffprobe` y prepara el archivo final con `ffmpeg`. Si la fuente etiqueta una calidad como FLAC pero entrega MP3, el archivo nunca se renombra: se rechaza o se descarga como MP3 real.
 
@@ -66,6 +68,7 @@ La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tm
 | `npm run start:once` | Servidor de producción sin supervisor (depuración). |
 | `npm test` | Pruebas unitarias con Vitest. |
 | `npm run typecheck` | TypeScript sin emitir archivos. |
+| `npm run verify:sources` | Comprueba contra la API real los cinco catálogos: búsqueda, resolución, `ffprobe` y descarga. Acepta `VERIFY_PLATFORMS=archive,jamendo,commons` y `VERIFY_KEYWORD`. |
 
 ## Configuración
 
@@ -75,7 +78,9 @@ Todas las variables son opcionales.
 | --- | --- | --- |
 | `PORT` | `12000` | Puerto HTTP. |
 | `HOST` | `0.0.0.0` | Interfaz de escucha. |
-| `UPSTREAM_API` | `https://flacplay-ik32bcxq.manus.space` | API de catálogo. |
+| `UPSTREAM_API` | `https://flacplay-ik32bcxq.manus.space` | API de catálogo (Kuwo y NetEase). |
+| `JAMENDO_CLIENT_ID` | vacío | Clave de la API oficial de Jamendo. Sin ella se usa Openverse, que también devuelve FLAC de Jamendo pero no permite abrir álbumes. |
+| `NETEASE_NATIVE` | `true` | Resuelve NetEase en el servidor en vez de delegar en la API de catálogo. |
 | `UPSTREAM_TIMEOUT_MS` | `25000` | Tiempo máximo por petición al catálogo. |
 | `DOWNLOAD_TIMEOUT_MS` | `180000` | Tiempo máximo para descargar una pista. |
 | `MAX_DOWNLOAD_BYTES` | `251658240` | Límite de tamaño de descarga. |
@@ -146,6 +151,16 @@ La comprobación es **orientativa**: el servidor lee los primeros 64 KB, detecta
 
 La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate`, `X-FLACPlay-Verified`, `X-FLACPlay-Cover` y, cuando hay portada, `X-FLACPlay-Cover-Resolution` (por ejemplo `1200x1200`).
 
+### Catálogos abiertos
+
+| Catálogo | Identificador | Letras | Álbumes | Notas |
+| --- | --- | --- | --- | --- |
+| Internet Archive | `archive` | No | Sí | Busca solo ítems con formato FLAC en `etree`, `netlabels`, `audio_music` y `78rpm`. Muchos ítems son digitalizaciones de 78 rpm a 11 kHz: el verificador los acepta si el corte de espectro coincide con su Nyquist real. |
+| Jamendo | `jamendo` | No | Sí, con `JAMENDO_CLIENT_ID` | Con clave usa la API oficial; sin clave usa Openverse y el identificador se deduce de la URL del audio. |
+| Wikimedia Commons | `commons` | No | No | Solo archivos FLAC. Exige un `User-Agent` identificable (Wikimedia rechaza los de navegador con `429`) y el servidor reintenta con espera. |
+
+Los tres comparten la misma verificación que Kuwo y NetEase: `ffprobe` confirma códec, frecuencia y duración, y el análisis de espectro decide entre `lossless`, `high-cut` y `transcoded`. Los FLAC de Commons suelen venir de digitalizaciones con pérdida, así que es normal que se rechacen como `transcoded`; el aviso indica el corte medido.
+
 ### FLAC auténtico
 
 Un FLAC puede ser sin pérdida de verdad o un archivo con pérdida recodificado (por ejemplo un MP3 320 renombrado). El formato y la duración no lo revelan, así que el servidor mide el espectro con `ffmpeg` y compara el corte real con el límite teórico de la frecuencia de muestreo (22,1 kHz en 44,1 kHz).
@@ -180,11 +195,22 @@ El servidor responde a las peticiones cruzadas con `Access-Control-Allow-Origin`
 npm test
 ```
 
-Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico y la selección de candidatos en modo estricto.
+Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico, la selección de candidatos en modo estricto, los adaptadores de los tres catálogos abiertos y la validación de identificadores (los catálogos abiertos aceptan rutas y títulos; Kuwo y NetEase exigen identificadores numéricos).
+
+Para comprobar los catálogos reales, con el servidor en marcha:
+
+```bash
+VERIFY_PLATFORMS=archive,jamendo,commons npm run verify:sources
+```
+
+El script busca, resuelve, ejecuta `ffprobe` y descarga la primera pista de cada catálogo, y termina con un resumen de comprobaciones correctas.
 
 ## Limitaciones conocidas
 
 - La disponibilidad y la calidad dependen de la fuente. Una pista puede existir en el catálogo pero devolver una vista previa o fallar temporalmente.
+- Kuwo depende de la API de catálogo: cuando esa API rechaza la resolución, la pista no se puede escuchar aunque aparezca en los resultados. NetEase y los tres catálogos abiertos se resuelven en el servidor.
+- Internet Archive y Wikimedia Commons no publican letras ni (Commons) álbumes; la interfaz oculta esas acciones según el catálogo.
+- Los archivos grandes se descargan en el navegador como `Blob`; en móviles con poca memoria conviene elegir MP3 o un FLAC de menos de ~50 MB.
 - No hay cuentas ni base de datos. El historial y las preferencias se guardan en `localStorage`.
 - La aplicación no aloja audio ni elude protecciones de la fuente. Descarga solo contenido al que tengas derecho de acceso.
 
@@ -194,7 +220,7 @@ Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqu
 server/            API Express, caché, validación, resolución y descarga
 src/               Frontend React, componentes, hooks y estilos
 tests/             Pruebas unitarias de Vitest
-scripts/           Supervisor de producción
+scripts/           Supervisor de producción y verificación de catálogos
 public/            Recursos estáticos
 dist/              Build de producción
 docker-compose.yml Despliegue con reinicio automático y healthcheck

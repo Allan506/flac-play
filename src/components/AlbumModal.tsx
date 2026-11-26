@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAlbum } from '../api';
 import type { AlbumInfo, Platform, Quality, Track } from '../types';
 import { bestQuality, formatDuration, formatQuality, sourceAlbumUrl } from '../lib/format';
+import { platformOverline } from '../lib/platforms';
 import { Modal } from './Modal';
 import {
   DownloadIcon,
@@ -140,7 +141,7 @@ export function AlbumModal({
     <Modal
       open={open}
       onClose={onClose}
-      overline={`FLAC PLAY · ÁLBUM · ${platform === 'kuwo' ? 'KUWO' : 'NETEASE'}`}
+      overline={`FLAC PLAY · ÁLBUM · ${platformOverline(platform)}`}
       title={info?.name || fallbackName || 'Álbum'}
       description={info ? `${info.artist}${info.release_date ? ` · ${info.release_date}` : ''}` : fallbackArtist}
       className="album-modal"

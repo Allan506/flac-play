@@ -3,6 +3,7 @@ import { getLyrics } from '../api';
 import type { Platform, Track } from '../types';
 import { findActiveLine, lyricsToPlainText, parseLrc } from '../lib/lrc';
 import { formatDuration, sourceTrackUrl } from '../lib/format';
+import { platformOverline } from '../lib/platforms';
 import { Modal } from './Modal';
 import { CopyIcon, ExternalIcon, LoaderIcon, PlayIcon } from './Icons';
 
@@ -83,7 +84,7 @@ export function LyricsModal({
     <Modal
       open={open}
       onClose={onClose}
-      overline={`FLAC PLAY · LETRA · ${platform === 'kuwo' ? 'KUWO' : 'NETEASE'}`}
+      overline={`FLAC PLAY · LETRA · ${platformOverline(platform)}`}
       title={track?.name ?? 'Letra'}
       description={
         track

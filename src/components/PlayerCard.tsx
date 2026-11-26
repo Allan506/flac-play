@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
-import type { PlayerTrack } from '../types';
+import type { Platform, PlayerTrack } from '../types';
 import { formatDuration, formatQuality, sourceTrackUrl } from '../lib/format';
+import { platformHasAlbums, platformHasLyrics } from '../lib/platforms';
 import {
   AlbumIcon,
   DownloadIcon,
@@ -33,6 +34,7 @@ interface PlayerCardProps {
   onToggleMute: () => void;
   onNext: () => void;
   onPrevious: () => void;
+  platform?: Platform | null;
   onLyrics: () => void;
   onDownload: () => void;
   onAlbum: () => void;
@@ -54,6 +56,7 @@ export function PlayerCard({
   onToggleMute,
   onNext,
   onPrevious,
+  platform,
   onLyrics,
   onDownload,
   onAlbum,
@@ -186,15 +189,19 @@ export function PlayerCard({
       </div>
 
       <div className="player-secondary">
-        <button type="button" className="secondary-button" onClick={onLyrics} disabled={!track}>
-          <LyricsIcon size={15} /> Letra
-        </button>
+        {(!platform || platformHasLyrics(platform)) && (
+          <button type="button" className="secondary-button" onClick={onLyrics} disabled={!track}>
+            <LyricsIcon size={15} /> Letra
+          </button>
+        )}
         <button type="button" className="secondary-button" onClick={onDownload} disabled={!track}>
           <DownloadIcon size={15} /> Descarga
         </button>
-        <button type="button" className="secondary-button" onClick={onAlbum} disabled={!track || !track.album_id}>
-          <AlbumIcon size={15} /> Álbum
-        </button>
+        {(!platform || platformHasAlbums(platform)) && (
+          <button type="button" className="secondary-button" onClick={onAlbum} disabled={!track || !track.album_id}>
+            <AlbumIcon size={15} /> Álbum
+          </button>
+        )}
         {track ? (
           <a
             className="secondary-button secondary-link"

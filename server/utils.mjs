@@ -75,6 +75,24 @@ export function assertHttpUrl(rawUrl, suffixes, label = 'URL') {
   return url;
 }
 
+export function audioRequestHeaders(url) {
+  const headers = { 'User-Agent': config.userAgent, Accept: '*/*' };
+  let host = '';
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return headers;
+  }
+  if (host === 'wikimedia.org' || host.endsWith('.wikimedia.org')) {
+    headers['User-Agent'] = config.wikimediaUserAgent;
+  } else if (host.endsWith('.kuwo.cn') || host.endsWith('.kuwo.com')) {
+    headers.Referer = 'https://www.kuwo.cn/';
+  } else if (host.endsWith('.126.net') || host.endsWith('.126.com')) {
+    headers.Referer = 'https://music.163.com/';
+  }
+  return headers;
+}
+
 export function assertAudioUrl(rawUrl) {
   return assertHttpUrl(rawUrl, config.audioHostSuffixes, 'dirección de audio');
 }

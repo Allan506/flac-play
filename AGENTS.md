@@ -7,6 +7,7 @@
 - `npm test` — Vitest (`tests/**/*.test.ts`).
 - `npm start` — production server under `scripts/serve-prod.sh` (supervisor + health watchdog).
 - `npm run start:once` — plain `node server/index.mjs` for debugging.
+- `VERIFY_PLATFORMS=archive,jamendo,commons npm run verify:sources [base] [keyword]` — hits a running API and checks search, resolve, ffprobe and download per catalog.
 
 `ffmpeg`/`ffprobe` are resolved in this order: `FFMPEG_PATH`/`FFPROBE_PATH`, the static package binaries, then the `PATH` (`/usr/local/bin`, `/usr/bin`, `/bin`, `/opt/homebrew/bin`, `/snap/bin`). `server/tools.mjs` implements the lookup and `server/config.mjs` runs it once at import.
 
@@ -19,6 +20,16 @@
 - FLAC downloads retry the resolve up to three times because the upstream alternates variants between requests.
 - `server/audio-format.d.mts` provides TypeScript types for the `.mjs` module used by tests.
 - `server/covers.mjs` upgrades covers to the largest available source: Kuwo 1200px with 500/300/original fallbacks, NetEase original without `?param=`.
+
+## Catalogs
+
+- Five platforms: `kuwo`, `wyy` (via `UPSTREAM_API`) and `archive`, `jamendo`, `commons` (resolved in-process by `server/sources/*.mjs`). `server/sources/index.mjs` is the registry: `NATIVE_SOURCES` maps platform → `{ search, resolve, album, lyrics }`, `nativeSource()` returns `null` for the upstream catalogs so the dispatcher falls through to `server/upstream.mjs`.
+- `NATIVE_PLATFORMS` in `server/validation.mjs` drives identifier validation: open catalogs accept text IDs (file paths, `File:` titles) up to 300 chars, Kuwo/NetEase still require numeric IDs. Zero-only IDs are rejected everywhere.
+- `audioRequestHeaders(url)` in `server/utils.mjs` is the single place for per-host headers. Wikimedia returns `429` to browser UAs and needs the identifiable `config.wikimediaUserAgent`; Kuwo/NetEase need their referers.
+- `fetchWithRetry(url, options, { attempts })` in `server/http.mjs` retries `429`/`503` with backoff. Use it for every new remote call instead of raw `fetch`.
+- Each `.mjs` module has a hand-written `.d.mts` sibling because `tsc` type-checks `tests/`. Adding an export without updating the `.d.mts` breaks `npm run build`.
+- The frontend mirrors the server: `Platform` union in `src/types.ts`, `src/lib/platforms.ts` for names/overline/lyrics gating, and `catalogs` from `/api/config` (which now carries `lyrics` and `albums` flags). `FALLBACK_CONFIG` in `App.tsx` must list all five.
+- Internet Archive items are often 78 rpm transfers at 11 kHz; the spectrum check compares against the real Nyquist of the file, so they can be `lossless`. Commons FLACs are frequently lossy-sourced and get `422 LOSSLESS_NOT_VERIFIED` — expected, not a bug.
 
 ## Incident notes
 
@@ -63,8 +74,11 @@ Response headers `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-F
 - Anchor scrolling goes through `scrollToId()`, so `#search` and `#catalog` carry `scroll-margin-top: 84px`; without it the sticky `.topbar` covers the section heading.
 - Checkboxes inside `.toggle-row` are sized and coloured with `accent-color: var(--accent)`; the row is `align-items: flex-start` so multi-line copy stays aligned with the box.
 - The displayed version has a single source: `package.json` → `/api/config` → `Footer`/`SettingsModal`. Do not hardcode it in a component again.
+- `.toast` wraps long messages: it uses `border-radius: 20px` (not `--pill`) and `.toast p { flex: 1 1 auto; min-width: 0 }`. Without that, a long Spanish message collapses into a narrow column on mobile.
 
 ## Mobile checks
+
+- Mobile download and playback were verified with puppeteer-core driving `/usr/bin/chromium` at 390×844 with an iPhone UA: `Page.setDownloadBehavior` captures the blob download, then check magic bytes (`ID3` for MP3, `fLaC` for FLAC) and run ffprobe. Playback is checked through `#player-seek` (value = currentTime, max = duration) plus a `206` audio response, because the player creates `new Audio()` and never puts it in the DOM.
 
 - Emulate with CDP: `Emulation.setDeviceMetricsOverride({ width: 390, height: 844, deviceScaleFactor: 2, mobile: true })`, then compare `document.documentElement.scrollWidth` with `innerWidth` (both must be 390) and screenshot the sheet, lyrics, album and download modals.
 - Downloads were verified with iPhone/Android user agents for FLAC (with and without metadata) and MP3 128/320. The payload needs `songid`, `time`, `sign` and `expectedDurationSeconds` from the same search result; a hardcoded id fails with `400 UPSTREAM_UNAVAILABLE` because the duration check rejects it.

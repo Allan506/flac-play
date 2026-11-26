@@ -8,7 +8,7 @@ export function Footer({ version }: { version?: string }) {
         <BrandMark />
         <span>FLAC PLAY</span>
         <span className="footer-separator">/</span>
-        <span>v{version ?? '2.2.0'}</span>
+        <span>v{version ?? '2.3.0'}</span>
       </div>
 
       <details className="disclaimer">
@@ -16,7 +16,8 @@ export function Footer({ version }: { version?: string }) {
         <div className="disclaimer-popover">
           <p>
             FLAC Play es un buscador: no aloja audio ni elude protecciones de acceso. Los enlaces y
-            las calidades provienen de los catálogos públicos de Kuwo y NetEase.
+            las calidades provienen de los catálogos públicos de Kuwo, NetEase, Internet
+            Archive, Jamendo y Wikimedia Commons.
           </p>
           <p>
             Descarga sólo contenido al que tengas derecho de acceso y respeta las condiciones de

@@ -1,14 +1,39 @@
 import { z } from 'zod';
 import { HttpError } from './errors.mjs';
 
-const platform = z.enum(['kuwo', 'wyy'], {
-  errorMap: () => ({ message: 'Elige Kuwo o NetEase.' }),
+export const NATIVE_PLATFORMS = ['archive', 'jamendo', 'commons'];
+
+const platform = z.enum(['kuwo', 'wyy', ...NATIVE_PLATFORMS], {
+  errorMap: () => ({ message: 'Elige uno de los catálogos disponibles.' }),
 });
+
+const NUMERIC_ID = /^(?!0+$)\d{1,32}$/;
+const OPEN_ID = /^[^\u0000-\u001f\u007f]{1,300}$/u;
 
 const songId = z
   .string({ required_error: 'Falta el identificador de la pista.' })
   .trim()
-  .regex(/^\d{1,32}$/, 'El identificador de la pista no es válido.');
+  .min(1, 'Falta el identificador de la pista.')
+  .max(300, 'El identificador de la pista no es válido.');
+
+function validId(platformValue, value) {
+  return NATIVE_PLATFORMS.includes(platformValue)
+    ? OPEN_ID.test(String(value ?? ''))
+    : NUMERIC_ID.test(String(value ?? ''));
+}
+
+// Los catálogos abiertos usan identificadores de texto (ruta de archivo o título),
+// mientras que Kuwo y NetEase siguen exigiendo identificadores numéricos.
+function withIdRule(schema, field) {
+  return schema.superRefine((value, ctx) => {
+    if (validId(value.platform, value[field])) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: field === 'id' ? 'El álbum no es válido.' : 'El identificador de la pista no es válido.',
+      path: [field],
+    });
+  });
+}
 
 const sign = z
   .string()
@@ -40,7 +65,7 @@ export const searchSchema = z.object({
   page: z.coerce.number().int().min(1).max(200).default(1),
 });
 
-export const resolveSchema = z.object({
+const resolveSchemaBase = z.object({
   platform,
   songid: songId,
   format,
@@ -50,24 +75,25 @@ export const resolveSchema = z.object({
   requireLossless: z.boolean().default(false),
 });
 
-export const lyricsSchema = z.object({
+const lyricsSchemaBase = z.object({
   platform,
   songid: songId,
   time,
   sign,
 });
 
-export const albumSchema = z.object({
+const albumSchemaBase = z.object({
   platform,
   id: z
     .string({ required_error: 'Falta el álbum.' })
     .trim()
-    .regex(/^(?!0+$)\d{1,32}$/, 'El álbum no es válido.'),
+    .min(1, 'El álbum no es válido.')
+    .max(300, 'El álbum no es válido.'),
   page: z.coerce.number().int().min(1).max(200).default(1),
   size: z.coerce.number().int().min(1).max(50).default(20),
 });
 
-export const downloadSchema = z.object({
+const downloadSchemaBase = z.object({
   platform,
   songid: songId,
   format,
@@ -86,7 +112,7 @@ export const downloadSchema = z.object({
   allowDoubtful: z.boolean().default(false),
 });
 
-export const probeSchema = z.object({
+const probeSchemaBase = z.object({
   platform,
   songid: songId,
   format,
@@ -96,7 +122,7 @@ export const probeSchema = z.object({
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
 });
 
-export const checkSchema = z.object({
+const checkSchemaBase = z.object({
   platform,
   songid: songId,
   time,
@@ -123,3 +149,10 @@ export function parseBody(schema, body) {
   }
   return result.data;
 }
+
+export const resolveSchema = withIdRule(resolveSchemaBase, 'songid');
+export const lyricsSchema = withIdRule(lyricsSchemaBase, 'songid');
+export const albumSchema = withIdRule(albumSchemaBase, 'id');
+export const downloadSchema = withIdRule(downloadSchemaBase, 'songid');
+export const probeSchema = withIdRule(probeSchemaBase, 'songid');
+export const checkSchema = withIdRule(checkSchemaBase, 'songid');

@@ -161,11 +161,11 @@ export function SettingsModal({
       <div className="settings-about">
         <strong>Acerca de FLAC Play</strong>
         <p>
-          Un buscador independiente para comparar lo que publican los catálogos de Kuwo y NetEase.
+          Un buscador independiente para comparar lo que publican cinco catálogos, incluidos tres archivos abiertos con FLAC verificado.
           No aloja audio. Las vistas previas y las descargas dependen de lo que cada fuente permita.
         </p>
         <p className="settings-about-meta">
-          {config?.catalogs.length ?? 2} catálogos · {config?.pageSize ?? 20} resultados por página ·
+          {config?.catalogs.length ?? 5} catálogos · {config?.pageSize ?? 20} resultados por página ·
           versión {config?.version ?? '2.0.0'}
         </p>
       </div>

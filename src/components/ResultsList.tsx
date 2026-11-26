@@ -1,5 +1,6 @@
 import type { FilterState, Platform, Quality, SearchPage, Track } from '../types';
 import { formatDuration, pluralize } from '../lib/format';
+import { platformName } from '../lib/platforms';
 import { EmptyState } from './EmptyState';
 import { TrackSkeletonList } from './Skeleton';
 import { TrackRow } from './TrackRow';
@@ -150,7 +151,7 @@ export function ResultsList({
 
           <ul
             className={`track-list ${loading ? 'is-refreshing' : ''}`}
-            aria-label={`Resultados de ${platform === 'kuwo' ? 'Kuwo' : 'NetEase'}`}
+            aria-label={`Resultados de ${platformName(platform)}`}
             aria-busy={loading}
           >
             {filtered.map((track, index) => (

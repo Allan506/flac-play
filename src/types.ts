@@ -1,4 +1,4 @@
-export type Platform = 'kuwo' | 'wyy';
+export type Platform = 'kuwo' | 'wyy' | 'archive' | 'jamendo' | 'commons';
 
 export type AudioFormat = 'mp3' | 'flac';
 
@@ -125,6 +125,8 @@ export interface Catalog {
   value: Platform;
   name: string;
   initial: string;
+  lyrics?: boolean;
+  albums?: boolean;
 }
 
 export interface AppConfig {

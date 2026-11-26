@@ -18,8 +18,8 @@ export function Hero({ catalogCount }: HeroProps) {
           <span>Escucha cada detalle.</span>
         </h1>
         <p className="hero-subtitle">
-          Dos catálogos, una sola cabina. Compara calidades, lee la letra y descubre si la fuente
-          ofrece la pista completa antes de descargar.
+          Kuwo, NetEase y tres archivos abiertos en una sola cabina. Compara calidades, lee la
+          letra y comprueba con ffprobe si la fuente ofrece un FLAC real antes de descargar.
         </p>
         <div className="hero-facts">
           <span>
