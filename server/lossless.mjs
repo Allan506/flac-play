@@ -240,9 +240,9 @@ export async function analyzeFile(file, { deep = false, headerBytes = null } = {
       : probe.duration > DECODE_SECONDS * 2
         ? [probe.duration * 0.25, probe.duration * 0.75]
         : [0];
-  const muestras = await Promise.all(offsets.map((offset) => decodeSamples(file, DECODE_SECONDS, offset)));
   let cutoffHz = 0;
-  for (const samples of muestras) {
+  for (const offset of offsets) {
+    const samples = await decodeSamples(file, DECODE_SECONDS, offset);
     if (!samples || samples.length < 44100) continue;
     cutoffHz = Math.max(cutoffHz, spectrumCutoff(samples, 44100));
   }
