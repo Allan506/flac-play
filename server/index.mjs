@@ -279,6 +279,7 @@ api.post(
         res.setHeader('X-FLACPlay-Lossless-Integrity', result.lossless.integrityOk === false ? '0' : '1');
         res.setHeader('X-FLACPlay-Lossless-Bits', String(result.lossless.bits ?? 0));
         res.setHeader('X-FLACPlay-Lossless-Sample-Rate', String(result.lossless.sampleRate ?? 0));
+        res.setHeader('X-FLACPlay-Lossless-Bitexact', result.lossless.bitexact === false ? '0' : '1');
       }
     };
 

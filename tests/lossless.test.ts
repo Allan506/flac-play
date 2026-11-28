@@ -51,6 +51,23 @@ describe('judgeSpectrum', () => {
   it('rechaza lo que no es FLAC', () => {
     expect(judgeSpectrum({ codec: 'mp3', sampleRate: 44100, cutoffHz: 20000 }).verdict).toBe('not-flac');
   });
+
+  it('exige llegar al 99,5 % del Nyquist real', () => {
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 44100, cutoffHz: 21_950 }).verdict).toBe('lossless');
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 44100, cutoffHz: 21_900 }).verdict).toBe('high-cut');
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 44100, cutoffHz: 21_000 }).verdict).toBe('high-cut');
+  });
+
+  it('compara con el Nyquist del propio archivo, no con 22,05 kHz', () => {
+    // Un FLAC de 96 kHz sobremuestreado desde 44,1 sólo lleva contenido hasta 22 kHz.
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 96000, cutoffHz: 22_000 }).verdict).toBe('transcoded');
+    // Un FLAC de 48 kHz real llega a 24 kHz.
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 48000, cutoffHz: 23_900 }).verdict).toBe('lossless');
+    // Un FLAC de 22,05 kHz real llega a 11 kHz.
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 22050, cutoffHz: 11_000 }).verdict).toBe('lossless');
+    // Un 78 rpm digitalizado a 11 kHz llega a 5,5 kHz.
+    expect(judgeSpectrum({ codec: 'flac', sampleRate: 11025, cutoffHz: 5_500 }).verdict).toBe('lossless');
+  });
 });
 
 describe('isLosslessVerified', () => {

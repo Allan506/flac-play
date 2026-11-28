@@ -347,7 +347,7 @@ export function DownloadModal({
       const coverNote = coverResolution ? ` · portada ${coverResolution}` : '';
       const losslessNote =
         losslessVerdict === 'lossless'
-          ? ` · FLAC verificado (${formatKhz(losslessCutoff)} de ${formatKhz(losslessLimit)})`
+          ? ` · FLAC verificado (${formatKhz(losslessCutoff)} de ${formatKhz(losslessLimit)}, audio idéntico al origen)`
           : losslessVerdict === 'high-cut'
             ? ` · FLAC con corte en ${formatKhz(losslessCutoff)}`
             : '';
@@ -392,7 +392,10 @@ export function DownloadModal({
           label: String(caught.details?.label ?? ''),
         });
         setError(caught.message);
-      } else if (caught instanceof ApiError && caught.code === 'LOSSLESS_INTEGRITY_FAILED') {
+      } else if (
+        caught instanceof ApiError &&
+        (caught.code === 'LOSSLESS_INTEGRITY_FAILED' || caught.code === 'LOSSLESS_AUDIO_CHANGED')
+      ) {
         setError(caught.message);
       } else if (caught instanceof ApiError && caught.code === 'PREVIEW_ONLY') {
         setPreviewRejected(true);

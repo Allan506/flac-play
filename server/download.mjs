@@ -16,7 +16,13 @@ import { config } from './config.mjs';
 import { coverCandidates } from './covers.mjs';
 import { HttpError, PreviewOnlyError, UpstreamError } from './errors.mjs';
 import { fetchWithRetry, httpFetch } from './http.mjs';
-import { analyzeFile, analyzeRemote, evaluateFlacDelivery, verifyFlacIntegrity } from './lossless.mjs';
+import {
+  analyzeFile,
+  analyzeRemote,
+  audioDigest,
+  evaluateFlacDelivery,
+  verifyFlacIntegrity,
+} from './lossless.mjs';
 import { resolveAudio } from './upstream.mjs';
 import { assertAudioUrl, assertCoverUrl, audioRequestHeaders, sanitizeFilename, sleep } from './utils.mjs';
 
@@ -800,7 +806,16 @@ export async function downloadAndPrepare(input, jobDir) {
 
   if (outputFormat === 'flac' && outputPath !== sourcePath) {
     const preparado = await analyzeFile(outputPath);
-    const entregaFinal = evaluateFlacDelivery(preparado);
+    // La prueba dura: el PCM del archivo entregado tiene que ser idéntico al del
+    // origen. Cualquier remuestreo, cambio de profundidad o recodificación con
+    // pérdida cambia la huella y se rechaza aquí.
+    const [huellaOrigen, huellaSalida] = await Promise.all([
+      audioDigest(sourcePath),
+      audioDigest(outputPath),
+    ]);
+    const bitexact = huellaOrigen && huellaSalida ? huellaOrigen === huellaSalida : null;
+    if (lossless) lossless.bitexact = bitexact;
+    const entregaFinal = evaluateFlacDelivery(preparado, { bitexact });
     if (!entregaFinal.deliverable) {
       throw new HttpError(
         422,
@@ -822,6 +837,10 @@ export async function downloadAndPrepare(input, jobDir) {
         { integrityOk: false },
       );
     }
+  }
+
+  if (outputFormat === 'flac' && lossless && lossless.bitexact === undefined) {
+    lossless.bitexact = true;
   }
 
   const stats = await fs.stat(outputPath);

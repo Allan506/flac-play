@@ -7,7 +7,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { sniffAudioFormat } from '../server/audio-format.mjs';
-import { analyzeFile, evaluateFlacDelivery } from '../server/lossless.mjs';
+import {
+  analyzeFile,
+  audioDigest,
+  evaluateFlacDelivery,
+  verifyFlacIntegrity,
+} from '../server/lossless.mjs';
 
 const require = createRequire(import.meta.url);
 const ffmpegBin = require('ffmpeg-static') as string | null;
@@ -118,6 +123,7 @@ describe.skipIf(!TOOLS)('archivos que dicen ser FLAC', () => {
       rutas.reducido,
     ]);
 
+    // 96 kHz de verdad: el generador ya trabaja a esa tasa.
     rutas.altaTasa = path.join(dir, 'hi-res.flac');
     await ffmpeg([
       '-f',
@@ -128,6 +134,41 @@ describe.skipIf(!TOOLS)('archivos que dicen ser FLAC', () => {
       'flac',
       rutas.altaTasa,
     ]);
+
+    // 96 kHz inflados: el mismo audio de 44,1 kHz sobremuestreado. El contenido
+    // sigue parando en 22 kHz, así que su Nyquist de 48 kHz queda vacío.
+    rutas.altaTasaInflada = path.join(dir, 'hi-res-inflado.flac');
+    await ffmpeg(['-i', rutas.real, '-ar', '96000', '-c:a', 'flac', rutas.altaTasaInflada]);
+
+    // 24 bits reales, y las dos formas de degradarlo: copiar el flujo o bajar a 16.
+    const fuente24 = path.join(dir, 'origen-24.wav');
+    await ffmpeg([
+      '-f',
+      'lavfi',
+      '-i',
+      'anoisesrc=color=white:duration=4:sample_rate=44100:amplitude=0.3',
+      '-c:a',
+      'pcm_s24le',
+      fuente24,
+    ]);
+    rutas.veinticuatro = path.join(dir, '24-bits.flac');
+    await ffmpeg(['-i', fuente24, '-c:a', 'flac', rutas.veinticuatro]);
+    rutas.veinticuatroCopia = path.join(dir, '24-bits-metadatos.flac');
+    await ffmpeg([
+      '-i',
+      rutas.veinticuatro,
+      '-map',
+      '0:a:0',
+      '-c:a',
+      'copy',
+      '-map_metadata',
+      '-1',
+      '-metadata',
+      'title=Título de prueba',
+      rutas.veinticuatroCopia,
+    ]);
+    rutas.veinticuatroA16 = path.join(dir, '24-bits-a-16.flac');
+    await ffmpeg(['-i', rutas.veinticuatro, '-c:a', 'flac', '-sample_fmt', 's16', rutas.veinticuatroA16]);
   }, 240_000);
 
   afterAll(async () => {
@@ -145,6 +186,15 @@ describe.skipIf(!TOOLS)('archivos que dicen ser FLAC', () => {
     const analisis = await analyzeFile(rutas.altaTasa);
     expect(analisis?.verdict).toBe('lossless');
     expect(evaluateFlacDelivery(analisis).deliverable).toBe(true);
+  });
+
+  it('rechaza un FLAC de 96 kHz sobremuestreado desde 44,1 kHz', async () => {
+    const analisis = await analyzeFile(rutas.altaTasaInflada);
+    expect(analisis?.sampleRate).toBe(96_000);
+    // El contenido real para en 22 kHz, muy lejos del Nyquist de 48 kHz.
+    expect(analisis?.ratio).toBeLessThan(0.86);
+    expect(analisis?.verdict).not.toBe('lossless');
+    expect(evaluateFlacDelivery(analisis).deliverable).toBe(false);
   });
 
   it('detecta el FLAC que esconde un MP3 128 y no lo entrega', async () => {
@@ -169,6 +219,41 @@ describe.skipIf(!TOOLS)('archivos que dicen ser FLAC', () => {
     const analisis = await analyzeFile(rutas.renombrado);
     expect(analisis?.verdict).toBe('not-flac');
     expect(evaluateFlacDelivery(analisis).deliverable).toBe(false);
+  });
+
+  it('la copia con metadatos conserva las muestras y la profundidad de 24 bits', async () => {
+    const original = await analyzeFile(rutas.veinticuatro);
+    const copia = await analyzeFile(rutas.veinticuatroCopia);
+    expect(original?.bits).toBe(24);
+    expect(copia?.bits).toBe(24);
+    expect(await audioDigest(rutas.veinticuatroCopia)).toBe(await audioDigest(rutas.veinticuatro));
+  });
+
+  it('la huella del audio detecta una bajada de 24 a 16 bits', async () => {
+    const dieciseis = await analyzeFile(rutas.veinticuatroA16);
+    expect(dieciseis?.bits).toBe(16);
+    expect(await audioDigest(rutas.veinticuatroA16)).not.toBe(await audioDigest(rutas.veinticuatro));
+  });
+
+  it('acepta la integridad de un FLAC completo y rechaza uno truncado', async () => {
+    expect(await verifyFlacIntegrity(rutas.real)).toBe(true);
+    const datos = await fs.readFile(rutas.real);
+    const truncado = path.join(dir as string, 'truncado.flac');
+    await fs.writeFile(truncado, datos.subarray(0, Math.floor(datos.length * 0.6)));
+    expect(await verifyFlacIntegrity(truncado)).toBe(false);
+  });
+
+  it('rechaza la entrega cuando el audio preparado no es idéntico al origen', () => {
+    const analisis = {
+      verdict: 'lossless',
+      cutoffHz: 22_045,
+      limitHz: 22_050,
+      integrityOk: true,
+    };
+    const entrega = evaluateFlacDelivery(analisis as never, { bitexact: false });
+    expect(entrega.deliverable).toBe(false);
+    expect(entrega.code).toBe('LOSSLESS_AUDIO_CHANGED');
+    expect(entrega.message).toContain('muestras');
   });
 
   it('no entrega un FLAC con el espectro recortado', async () => {

@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,11 @@ const execFileAsync = promisify(execFile);
 const WINDOW = 8192;
 const HOP = 4096;
 const DECODE_SECONDS = 12;
+// El contenido debe llegar al 99,5 % del Nyquist real del archivo: en 44,1 kHz
+// son 21,9 kHz, unos 110 Hz por debajo del techo. Cualquier codificador con
+// pérdida deja su corte por debajo (MP3 128-320: 20,3-20,8 kHz).
+const LOSSLESS_RATIO = 0.995;
+const HIGH_CUT_RATIO = 0.86;
 
 function fft(re, im) {
   const n = re.length;
@@ -105,18 +111,19 @@ export function spectrumCutoff(samples, sampleRate) {
 }
 
 export function judgeSpectrum({ codec, sampleRate, cutoffHz }) {
+  // El límite es el Nyquist real del archivo, sin tope: un FLAC de 96 kHz debe
+  // llevar contenido hasta 48 kHz, así que uno sobremuestreado desde 44,1 kHz
+  // (corte en 22 kHz) queda al descubierto en vez de pasar por bueno.
+  const limite = sampleRate > 0 ? sampleRate / 2 : 22050;
   if (String(codec).toLowerCase() !== 'flac') {
-    return { verdict: 'not-flac', ratio: 0, limitHz: 0 };
+    return { verdict: 'not-flac', ratio: 0, limitHz: limite };
   }
   if (!(cutoffHz > 0)) {
-    return { verdict: 'unknown', ratio: 0, limitHz: Math.min(sampleRate > 0 ? sampleRate / 2 : 22050, 22050) };
+    return { verdict: 'unknown', ratio: 0, limitHz: limite };
   }
-  const limite = Math.min(sampleRate > 0 ? sampleRate / 2 : 22050, 22050);
   const ratio = limite > 0 ? cutoffHz / limite : 0;
-  // 0.97 exige contenido audible a menos de 0.7 kHz del límite: los
-  // codificadores con pérdida medidos (MP3 128-320) se quedan en 0.92-0.94.
-  if (ratio >= 0.97) return { verdict: 'lossless', ratio, limitHz: limite };
-  if (ratio >= 0.86) return { verdict: 'high-cut', ratio, limitHz: limite };
+  if (ratio >= LOSSLESS_RATIO) return { verdict: 'lossless', ratio, limitHz: limite };
+  if (ratio >= HIGH_CUT_RATIO) return { verdict: 'high-cut', ratio, limitHz: limite };
   return { verdict: 'transcoded', ratio, limitHz: limite };
 }
 
@@ -163,38 +170,71 @@ async function probeAudio(file) {
   }
 }
 
-async function decodeSamples(file, seconds, offsetSeconds = 0) {
+async function decodeSamples(file, seconds, offsetSeconds = 0, sampleRate = 0) {
   if (!config.ffmpegPath) return null;
+  const args = [
+    '-v',
+    'error',
+    '-nostdin',
+    ...(offsetSeconds > 0 ? ['-ss', String(Math.round(offsetSeconds))] : []),
+    '-i',
+    file,
+    '-t',
+    String(seconds),
+    '-ac',
+    '1',
+    ...(sampleRate > 0 ? ['-ar', String(sampleRate)] : []),
+    '-f',
+    'f32le',
+    '-',
+  ];
+  let buffer = null;
   try {
-    const { stdout } = await execFileAsync(
-      config.ffmpegPath,
-      [
-        '-v',
-        'error',
-        '-nostdin',
-        ...(offsetSeconds > 0 ? ['-ss', String(Math.round(offsetSeconds))] : []),
-        '-i',
-        file,
-        '-t',
-        String(seconds),
-        '-ac',
-        '1',
-        '-ar',
-        '44100',
-        '-f',
-        'f32le',
-        '-',
-      ],
-      { timeout: 120_000, maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' },
-    );
-    const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
-    const usable = buffer.length - (buffer.length % 4);
-    const samples = new Float32Array(usable / 4);
-    for (let i = 0; i < samples.length; i += 1) samples[i] = buffer.readFloatLE(i * 4);
-    return samples;
-  } catch {
-    return null;
+    const { stdout } = await execFileAsync(config.ffmpegPath, args, {
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+      encoding: 'buffer',
+    });
+    buffer = stdout;
+  } catch (error) {
+    // Un prefijo remoto truncado hace que ffmpeg salga con error después de
+    // entregar las muestras buenas: se aprovechan en vez de perder la medida.
+    buffer = error?.stdout ?? null;
   }
+  if (!buffer) return null;
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const usable = bytes.length - (bytes.length % 4);
+  if (usable < 4) return null;
+  const samples = new Float32Array(usable / 4);
+  for (let i = 0; i < samples.length; i += 1) samples[i] = bytes.readFloatLE(i * 4);
+  return samples;
+}
+
+export function audioDigest(file) {
+  if (!config.ffmpegPath) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const hash = createHash('sha256');
+    const child = spawn(
+      config.ffmpegPath,
+      ['-v', 'error', '-nostdin', '-i', file, '-map', '0:a:0', '-f', 's32le', '-'],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(null);
+    }, 600_000);
+    child.stdout.on('data', (chunk) => hash.update(chunk));
+    child.stderr.resume();
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? hash.digest('hex') : null));
+  });
 }
 
 export async function verifyFlacIntegrity(file) {
@@ -211,7 +251,7 @@ export async function verifyFlacIntegrity(file) {
   }
 }
 
-export async function analyzeFile(file, { deep = false, headerBytes = null } = {}) {
+export async function analyzeFile(file, { deep = false, headerBytes = null, prefixRatio = null } = {}) {
   const container = headerBytes ? sniffAudioFormat(headerBytes) : null;
   const probe = await probeAudio(file);
   if (!probe) {
@@ -234,23 +274,30 @@ export async function analyzeFile(file, { deep = false, headerBytes = null } = {
 
   // Varias ventanas: una pasada tranquila puede parecer recortada y un archivo
   // con pérdida nunca supera su techo en ninguna. Se queda el máximo medido.
+  // En un prefijo remoto el contenedor anuncia la duración completa, pero sólo
+  // hay audio hasta donde llegan los bytes descargados: las ventanas se colocan
+  // dentro de lo que de verdad se puede decodificar.
+  const completa = probe.duration || 0;
+  const disponible =
+    completa > 0 && prefixRatio !== null && prefixRatio > 0 && prefixRatio < 1
+      ? completa * prefixRatio
+      : completa;
   const offsets =
-    probe.duration > DECODE_SECONDS * 3
-      ? [probe.duration * 0.15, probe.duration * 0.5, probe.duration * 0.85]
-      : probe.duration > DECODE_SECONDS * 2
-        ? [probe.duration * 0.25, probe.duration * 0.75]
+    disponible > DECODE_SECONDS * 3
+      ? [disponible * 0.15, disponible * 0.5, disponible * 0.85]
+      : disponible > DECODE_SECONDS * 2
+        ? [disponible * 0.25, disponible * 0.75]
         : [0];
+  const tasa = probe.sampleRate > 0 ? probe.sampleRate : 44100;
   let cutoffHz = 0;
   for (const offset of offsets) {
-    const samples = await decodeSamples(file, DECODE_SECONDS, offset);
-    if (!samples || samples.length < 44100) continue;
-    cutoffHz = Math.max(cutoffHz, spectrumCutoff(samples, 44100));
+    const samples = await decodeSamples(file, DECODE_SECONDS, offset, tasa);
+    if (!samples || samples.length < WINDOW) continue;
+    cutoffHz = Math.max(cutoffHz, spectrumCutoff(samples, tasa));
   }
-  // Un origen de 11 kHz analizado a 44,1 kHz puede marcar imágenes por encima de
-  // su propio Nyquist: se recorta al límite del formato para que la razón no pase de 1.
-  const limiteFormato = Math.min(probe.sampleRate > 0 ? probe.sampleRate / 2 : 22050, 22050);
+  const limiteFormato = tasa / 2;
   const corteAjustado = limiteFormato > 0 ? Math.min(cutoffHz, limiteFormato) : cutoffHz;
-  const juicio = judgeSpectrum({ codec, sampleRate: probe.sampleRate || 44100, cutoffHz: corteAjustado });
+  const juicio = judgeSpectrum({ codec, sampleRate: tasa, cutoffHz: corteAjustado });
   const integrityOk = deep ? await verifyFlacIntegrity(file) : null;
 
   return {
@@ -286,7 +333,12 @@ async function analyzeRemoteUncached(url, { maxBytes = 8 * 1024 * 1024 } = {}) {
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.length < 4096) return null;
     await fs.writeFile(file, buffer);
-    return await analyzeFile(file, { headerBytes: buffer.subarray(0, 64) });
+    // Con Range el servidor dice el tamaño total: así sabemos qué parte de la
+    // duración anunciada cabe en el prefijo y no buscamos fuera de él.
+    const rango = String(response.headers.get('content-range') ?? '');
+    const total = Number(rango.match(/\/(\d+)$/)?.[1] ?? 0);
+    const prefixRatio = total > buffer.length ? buffer.length / total : null;
+    return await analyzeFile(file, { headerBytes: buffer.subarray(0, 64), prefixRatio });
   } catch {
     return null;
   } finally {
@@ -318,7 +370,7 @@ function rejectionMessage(analysis) {
  * si el espectro llega al límite del formato y la integridad MD5 es correcta.
  * No hay opción para forzar lo contrario.
  */
-export function evaluateFlacDelivery(analysis) {
+export function evaluateFlacDelivery(analysis, { bitexact = null } = {}) {
   const details = analysis
     ? {
         verdict: analysis.verdict ?? 'unknown',
@@ -329,8 +381,9 @@ export function evaluateFlacDelivery(analysis) {
         sampleRate: analysis.sampleRate ?? 0,
         bits: analysis.bits ?? 0,
         integrityOk: analysis.integrityOk ?? null,
+        bitexact,
       }
-    : { verdict: 'unknown', label: verdictLabel('unknown') };
+    : { verdict: 'unknown', label: verdictLabel('unknown'), bitexact };
 
   if (!analysis) {
     return {
@@ -357,10 +410,19 @@ export function evaluateFlacDelivery(analysis) {
       details,
     };
   }
+  if (bitexact === false) {
+    return {
+      deliverable: false,
+      code: 'LOSSLESS_AUDIO_CHANGED',
+      message:
+        'El archivo preparado no contiene exactamente las mismas muestras que el original: algún paso cambió el audio. No se entrega.',
+      details,
+    };
+  }
   return {
     deliverable: true,
     code: null,
-    message: `FLAC sin pérdida verificado (${khz(analysis.cutoffHz)} de ${khz(analysis.limitHz)}).`,
+    message: `FLAC sin pérdida verificado (${khz(analysis.cutoffHz)} de ${khz(analysis.limitHz)}, audio idéntico al origen).`,
     details,
   };
 }

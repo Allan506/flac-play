@@ -159,28 +159,32 @@ La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, 
 | Jamendo | `jamendo` | No | Sí, con `JAMENDO_CLIENT_ID` | Con clave usa la API oficial; sin clave usa Openverse y el identificador se deduce de la URL del audio. |
 | Wikimedia Commons | `commons` | No | No | Solo archivos FLAC. Exige un `User-Agent` identificable (Wikimedia rechaza los de navegador con `429`) y el servidor reintenta con espera. |
 
-Los tres comparten la misma verificación que Kuwo y NetEase: `ffprobe` confirma códec, frecuencia y duración, y el análisis de espectro decide entre `lossless`, `high-cut` y `transcoded`. Los FLAC de Commons suelen venir de digitalizaciones con pérdida, así que es normal que se rechacen como `transcoded`; el aviso indica el corte medido.
+Los tres comparten la misma verificación que Kuwo y NetEase: `ffprobe` confirma códec, frecuencia y duración, y el análisis de espectro contra el Nyquist real decide entre `lossless`, `high-cut` y `transcoded`. Los FLAC de Commons suelen venir de digitalizaciones con pérdida, así que es normal que se rechacen como `transcoded`; el aviso indica el corte medido.
 
 ### FLAC auténtico
 
-Un FLAC puede ser sin pérdida de verdad o un archivo con pérdida recodificado (por ejemplo un MP3 320 renombrado). El formato y la duración no lo revelan, así que el servidor mide el espectro con `ffmpeg` y compara el corte real con el límite teórico de la frecuencia de muestreo (22,1 kHz en 44,1 kHz).
+Un FLAC puede ser sin pérdida de verdad o un archivo con pérdida recodificado (por ejemplo un MP3 320 renombrado). El formato y la duración no lo revelan, así que el servidor mide el espectro con `ffmpeg` y compara el corte real con el **Nyquist real del propio archivo**: 22,05 kHz en 44,1 kHz, 24 kHz en 48 kHz, 48 kHz en 96 kHz, 5,5 kHz en un 78 rpm digitalizado a 11 kHz.
 
 **Ningún archivo con extensión `.flac` sale del servidor si no es FLAC sin pérdida.** La regla es única y no tiene excepciones ni interruptores: `evaluateFlacDelivery()` exige veredicto `lossless` sobre el archivo de origen y repite el análisis sobre el archivo ya preparado, después de incrustar metadatos y portada. Si cualquiera de las dos medidas falla, la descarga se corta con `422 LOSSLESS_NOT_VERIFIED` y el archivo nunca llega al navegador.
 
 Cómo se mide:
 
-- Se decodifican hasta tres ventanas de 12 s (15 %, 50 % y 85 % de la pista) y se toma el **corte máximo**: una pasada tranquila no puede marcar como recortado un FLAC íntegro, y un archivo con pérdida no puede superar su techo en ninguna ventana.
+- Se decodifican hasta tres ventanas de 12 s de la **parte que de verdad está en el archivo** (en un prefijo remoto se reparten dentro de los bytes descargados, no de la duración anunciada) y se toma el **corte máximo**: una pasada tranquila no puede marcar como recortado un FLAC íntegro, y un archivo con pérdida no puede superar su techo en ninguna ventana.
 - El corte es la frecuencia más alta con contenido audible por encima de `pico − 85 dB`, con la media móvil de tres bins.
-- Un archivo se considera `lossless` sólo si el corte llega al **97 %** del límite del formato (21,4 kHz de 22,05 kHz en 44,1 kHz). Los codificadores con pérdida medidos en este proyecto (MP3 128, 192, 256 y 320 de LAME) se quedan en el 92-94 %, así que el margen es de casi 0,7 kHz.
-- Además se comprueba la firma MD5 del `STREAMINFO` decodificando el archivo completo: un FLAC corrupto se rechaza con `422 LOSSLESS_INTEGRITY_FAILED` aunque el espectro sea perfecto.
+- Se decodifica a la **frecuencia de muestreo nativa del archivo**, sin remuestrear a 44,1 kHz, para que el Nyquist comparado sea el real.
+- Un archivo se considera `lossless` sólo si el corte llega al **99,5 %** del Nyquist real (21,94 kHz de 22,05 kHz en 44,1 kHz). Los codificadores con pérdida medidos en este proyecto (MP3 128, 192, 256 y 320 de LAME) se quedan en el 92-96 %, y los FLAC auténticos del catálogo miden 99,7-100 %.
+- Se comprueba la firma MD5 del `STREAMINFO` decodificando el archivo completo: un FLAC corrupto se rechaza con `422 LOSSLESS_INTEGRITY_FAILED` aunque el espectro sea perfecto.
+- **Prueba de muestras idénticas:** se calcula el SHA-256 del PCM decodificado del origen y del archivo preparado. Si no coinciden, la descarga se rechaza con `422 LOSSLESS_AUDIO_CHANGED`. Es lo que garantiza que incrustar metadatos y portada no cambia ni una muestra y que nunca se entrega un FLAC remuestreado o rebajado de profundidad.
 
-Veredictos posibles: `lossless` (espectro completo), `high-cut` (corte entre el 86 % y el 97 % del límite: compatible con una recodificación con pérdida), `transcoded` (corte por debajo del 86 %, claramente con pérdida), `not-flac` (los bytes no son FLAC) y `unknown` (no se pudo medir). Sólo `lossless` se entrega.
+Veredictos posibles: `lossless` (corte ≥ 99,5 % del Nyquist real), `high-cut` (entre el 86 % y el 99,5 %: compatible con una recodificación con pérdida), `transcoded` (por debajo del 86 %, claramente con pérdida), `not-flac` (los bytes no son FLAC) y `unknown` (no se pudo medir). Sólo `lossless` se entrega.
+
+Como el listón es el Nyquist real, un FLAC de 96 kHz sobremuestreado desde un máster de 44,1 kHz se rechaza: mide 22 kHz de 48 kHz posibles. También se rechazan los FLAC de 192 kHz de Commons que sólo llevan contenido hasta 22 kHz.
 
 Consecuencia asumida: un máster legítimo pero muy limitado de banda (por ejemplo un FLAC con contenido sólo hasta 15 kHz) tampoco se entrega como FLAC, porque es indistinguible de un archivo recodificado con pérdida. En esos casos la interfaz explica el corte medido y ofrece las calidades MP3 del catálogo.
 
 `POST /api/check` sigue aceptando `requireLossless` para filtrar la lista de calidades antes de descargar; en `/api/download` la exigencia es siempre la misma, se pida o no.
 
-La descarga añade `X-FLACPlay-Lossless-Verdict`, `X-FLACPlay-Lossless-Label`, `X-FLACPlay-Lossless-Cutoff-Hz`, `X-FLACPlay-Lossless-Limit-Hz`, `X-FLACPlay-Lossless-Integrity`, `X-FLACPlay-Lossless-Bits` y `X-FLACPlay-Lossless-Sample-Rate`. Si el FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide), responde `422 LOSSLESS_INTEGRITY_FAILED`.
+La descarga añade `X-FLACPlay-Lossless-Verdict`, `X-FLACPlay-Lossless-Label`, `X-FLACPlay-Lossless-Cutoff-Hz`, `X-FLACPlay-Lossless-Limit-Hz`, `X-FLACPlay-Lossless-Integrity`, `X-FLACPlay-Lossless-Bits`, `X-FLACPlay-Lossless-Sample-Rate` y `X-FLACPlay-Lossless-Bitexact`. Si el FLAC no supera la comprobación de integridad (la firma MD5 del audio no coincide), responde `422 LOSSLESS_INTEGRITY_FAILED`; si el archivo preparado no conserva las muestras exactas del origen, `422 LOSSLESS_AUDIO_CHANGED`.
 
 En la interfaz, el ajuste **Solo FLAC verificado** (Ajustes, se guarda en `localStorage`) filtra la búsqueda y los álbumes a pistas con FLAC, reproduce solo en FLAC y muestra en el diálogo de descarga el corte medido antes de bajar el archivo. Una calidad FLAC cuyo análisis no llega al espectro completo aparece como `No sin pérdida` con el corte medido y no se puede descargar; no hay botón para forzarla.
 

@@ -16,6 +16,7 @@ const EXPOSED_HEADERS = [
   'X-FLACPlay-Lossless-Integrity',
   'X-FLACPlay-Lossless-Bits',
   'X-FLACPlay-Lossless-Sample-Rate',
+  'X-FLACPlay-Lossless-Bitexact',
 ].join(', ');
 
 export function parseCorsOrigins(raw) {

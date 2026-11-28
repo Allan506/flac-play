@@ -12,6 +12,7 @@ export interface LosslessAnalysis {
   verdict: 'lossless' | 'high-cut' | 'transcoded' | 'not-flac' | 'unknown';
   label: string;
   integrityOk: boolean | null;
+  bitexact?: boolean | null;
   error?: string;
 }
 
@@ -29,7 +30,7 @@ export const VERDICT_LABELS: Record<string, string>;
 
 export function analyzeFile(
   file: string,
-  options?: { deep?: boolean; headerBytes?: Uint8Array | null },
+  options?: { deep?: boolean; headerBytes?: Uint8Array | null; prefixRatio?: number | null },
 ): Promise<LosslessAnalysis>;
 
 export function analyzeRemote(
@@ -37,11 +38,19 @@ export function analyzeRemote(
   options?: { maxBytes?: number },
 ): Promise<LosslessAnalysis | null>;
 
+export function audioDigest(file: string): Promise<string | null>;
+
+export function verifyFlacIntegrity(file: string): Promise<boolean>;
+
 export function isLosslessVerified(analysis: LosslessAnalysis | null | undefined): boolean;
 
 export interface FlacDeliveryDecision {
   deliverable: boolean;
-  code: 'LOSSLESS_NOT_VERIFIED' | 'LOSSLESS_INTEGRITY_FAILED' | null;
+  code:
+    | 'LOSSLESS_NOT_VERIFIED'
+    | 'LOSSLESS_INTEGRITY_FAILED'
+    | 'LOSSLESS_AUDIO_CHANGED'
+    | null;
   message: string;
   details: {
     verdict: LosslessAnalysis['verdict'];
@@ -52,9 +61,11 @@ export interface FlacDeliveryDecision {
     sampleRate?: number;
     bits?: number;
     integrityOk?: boolean | null;
+    bitexact?: boolean | null;
   };
 }
 
 export function evaluateFlacDelivery(
   analysis: LosslessAnalysis | null | undefined,
+  options?: { bitexact?: boolean | null },
 ): FlacDeliveryDecision;

@@ -19,7 +19,7 @@
 - The upstream can return a `.flac` URL whose content is MP3, or a `.mp3` URL whose content is FLAC. Trust the bytes, not the URL or `Content-Type`.
 - FLAC downloads retry the resolve up to three times because the upstream alternates variants between requests.
 - `evaluateFlacDelivery(analysis)` in `server/lossless.mjs` is the only gate for `.flac` output and it has no override: `verdict === 'lossless'` plus `integrityOk !== false`. `downloadAndPrepare` runs it on the source and again on the prepared file; `streamDirect` refuses any FLAC whose remote probe is not `lossless`. Do not add a "download anyway" flag — a lossy file labelled `.flac` is the one thing the project promises never to ship.
-- The spectrum check samples up to three 12 s windows (15/50/85 %) and keeps the maximum cutoff; `lossless` needs ≥ 97 % of the format limit. LAME MP3 128-320 measured 92-94 % in this environment, so the margin is ~0.7 kHz. `tests/flac-lossless-enforcement.test.ts` builds real MP3-in-FLAC fixtures with ffmpeg and asserts they are rejected.
+- The spectrum check decodes at the file's **native sample rate** (no resampling to 44.1) and samples up to three 12 s windows (15/50/85 % of the audio actually present, computed from the prefix size vs `Content-Range`) and keeps the maximum cutoff; `lossless` needs ≥ 99.5 % of the real Nyquist (`sampleRate / 2`, no 22.05 kHz cap). LAME MP3 128-320 measured 92-94 % in this environment, so the margin is ~0.7 kHz. `tests/flac-lossless-enforcement.test.ts` builds real MP3-in-FLAC fixtures with ffmpeg and asserts they are rejected.
 - `server/audio-format.d.mts` provides TypeScript types for the `.mjs` module used by tests.
 - `server/covers.mjs` upgrades covers to the largest available source: Kuwo 1200px with 500/300/original fallbacks, NetEase original without `?param=`.
 
@@ -31,7 +31,8 @@
 - `fetchWithRetry(url, options, { attempts })` in `server/http.mjs` retries `429`/`503` with backoff. Use it for every new remote call instead of raw `fetch`.
 - Each `.mjs` module has a hand-written `.d.mts` sibling because `tsc` type-checks `tests/`. Adding an export without updating the `.d.mts` breaks `npm run build`.
 - The frontend mirrors the server: `Platform` union in `src/types.ts`, `src/lib/platforms.ts` for names/overline/lyrics gating, and `catalogs` from `/api/config` (which now carries `lyrics` and `albums` flags). `FALLBACK_CONFIG` in `App.tsx` must list all five.
-- Internet Archive items are often 78 rpm transfers at 11 kHz; the spectrum check compares against the real Nyquist of the file, so they can be `lossless`. Commons FLACs are frequently lossy-sourced and get `422 LOSSLESS_NOT_VERIFIED` — expected, not a bug.
+- Internet Archive items are often 78 rpm transfers at 11 kHz; the spectrum check compares against the real Nyquist of the file, so they can be `lossless`. Commons 192 kHz transfers whose content stops at 22 kHz are upsampled masters and are rejected.
+- FLAC delivery also requires bit-exact audio: `audioDigest()` hashes the decoded PCM as `s32le` with SHA-256 and source/delivered hashes must match (`422 LOSSLESS_AUDIO_CHANGED`). Do not use `-f md5`/`-f framemd5` for this: both silently force `pcm_s16le` and hide 24→16 bit changes. Commons FLACs are frequently lossy-sourced and get `422 LOSSLESS_NOT_VERIFIED` — expected, not a bug.
 
 ## Incident notes
 
