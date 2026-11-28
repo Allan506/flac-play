@@ -1,0 +1,19 @@
+{
+  "name": "FLAC Play",
+  "short_name": "FLAC Play",
+  "description": "Busca, compara y escucha música de los catálogos de Kuwo y NetEase.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0d0b",
+  "theme_color": "#0b0d0b",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "flacplay-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
