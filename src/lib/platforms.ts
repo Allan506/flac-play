@@ -1,39 +1,25 @@
 import type { Platform } from '../types';
 
-export const KNOWN_PLATFORMS: Platform[] = ['kuwo', 'wyy', 'archive', 'jamendo', 'commons'];
+export const KNOWN_PLATFORMS: Platform[] = ['kuwo', 'wyy'];
 
 export const PLATFORM_NAMES: Record<Platform, string> = {
   kuwo: 'Kuwo',
   wyy: 'NetEase',
-  archive: 'Internet Archive',
-  jamendo: 'Jamendo',
-  commons: 'Commons',
 };
 
 export const PLATFORM_OVERLINES: Record<Platform, string> = {
   kuwo: 'KUWO',
   wyy: 'NETEASE',
-  archive: 'INTERNET ARCHIVE',
-  jamendo: 'JAMENDO',
-  commons: 'COMMONS',
 };
 
-// Los catálogos abiertos no publican letras sincronizadas.
 export const PLATFORM_HAS_LYRICS: Record<Platform, boolean> = {
   kuwo: true,
   wyy: true,
-  archive: false,
-  jamendo: false,
-  commons: false,
 };
 
-// Commons devuelve archivos sueltos, no fichas de álbum.
 export const PLATFORM_HAS_ALBUMS: Record<Platform, boolean> = {
   kuwo: true,
   wyy: true,
-  archive: true,
-  jamendo: true,
-  commons: false,
 };
 
 export function platformName(platform: Platform): string {

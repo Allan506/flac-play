@@ -16,8 +16,7 @@ export function Footer({ version }: { version?: string }) {
         <div className="disclaimer-popover">
           <p>
             FLAC Play es un buscador: no aloja audio ni elude protecciones de acceso. Los enlaces y
-            las calidades provienen de los catálogos públicos de Kuwo, NetEase, Internet
-            Archive, Jamendo y Wikimedia Commons.
+            las calidades provienen de los catálogos de Kuwo y NetEase.
           </p>
           <p>
             Descarga sólo contenido al que tengas derecho de acceso y respeta las condiciones de

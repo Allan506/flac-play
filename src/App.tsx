@@ -32,13 +32,10 @@ import type {
 } from './types';
 
 const FALLBACK_CONFIG: AppConfig = {
-  version: '2.3.0',
+  version: '2.6.0',
   catalogs: [
     { value: 'kuwo', name: 'Kuwo', initial: 'K', lyrics: true, albums: true },
     { value: 'wyy', name: 'NetEase', initial: 'W', lyrics: true, albums: true },
-    { value: 'archive', name: 'Internet Archive', initial: 'A', lyrics: false, albums: true },
-    { value: 'jamendo', name: 'Jamendo', initial: 'J', lyrics: false, albums: false },
-    { value: 'commons', name: 'Commons', initial: 'C', lyrics: false, albums: false },
   ],
   pageSize: 20,
   maxKeywordLength: 120,

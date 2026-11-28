@@ -1,6 +1,6 @@
 import { cached } from './cache.mjs';
 import { config } from './config.mjs';
-import { nativeSource } from './sources/index.mjs';
+import { normalizeRescueTitle } from './rescue.mjs';
 import { UpstreamError } from './errors.mjs';
 import { httpFetch } from './http.mjs';
 import {
@@ -190,15 +190,7 @@ function rememberTrack(track) {
   return cached(`wyy-track:${track.id}`, TRACK_CACHE_MS, async () => track);
 }
 
-function normalizeTitle(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\((?!feat)[^)]*\)|\[[^\]]*\]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
+const normalizeTitle = normalizeRescueTitle;
 
 export function rankKuwoMatches(meta, candidates, { requireLossless = false } = {}) {
   const objetivo = normalizeTitle(meta.name);
@@ -255,8 +247,7 @@ async function resolveNeteaseTwin({ songid, format, bitrate, requireLossless }) 
     page: 1,
   });
   const candidatas = rankKuwoMatches(meta, list, { requireLossless }).slice(0, requireLossless ? 3 : 1);
-  const gemela = candidatas[0] ?? null;
-  if (!gemela) {
+  if (!candidatas.length) {
     throw new UpstreamError(
       requireLossless
         ? 'NetEase no entrega esta pista sin cuenta y en Kuwo no hay una versión equivalente con FLAC. Prueba otra pista o añade tu cookie de NetEase.'
@@ -264,24 +255,38 @@ async function resolveNeteaseTwin({ songid, format, bitrate, requireLossless }) 
       502,
     );
   }
-  const calidad = requireLossless
-    ? chooseQuality(gemela.minfo, 'flac', '2000')
-    : chooseQuality(gemela.minfo, format, bitrate);
-  const audio = await resolveAudio({
-    platform: 'kuwo',
-    songid: gemela.id,
-    format: calidad.format,
-    bitrate: calidad.bitrate,
-    time: gemela.time,
-    sign: gemela.sign,
-  });
-  if (requireLossless && String(audio.format).toLowerCase() !== 'flac') {
-    throw new UpstreamError(
-      `Kuwo no entrega esta pista en FLAC: solo ofrece ${String(audio.format).toUpperCase()}. No se reproduce en modo sin pérdida.`,
-      422,
-    );
+
+  // Varias ediciones de la misma canción: se prueba cada una hasta dar con la
+  // que realmente entrega FLAC (no basta con que el buscador lo anuncie).
+  let ultimoFormato = '';
+  for (const gemela of candidatas) {
+    const calidad = requireLossless
+      ? chooseQuality(gemela.minfo, 'flac', '2000')
+      : chooseQuality(gemela.minfo, format, bitrate);
+    if (requireLossless && calidad.format !== 'flac') continue;
+    try {
+      const audio = await resolveAudio({
+        platform: 'kuwo',
+        songid: gemela.id,
+        format: calidad.format,
+        bitrate: calidad.bitrate,
+        time: gemela.time,
+        sign: gemela.sign,
+      });
+      ultimoFormato = String(audio.format).toUpperCase();
+      if (requireLossless && String(audio.format).toLowerCase() !== 'flac') continue;
+      return { ...audio, sourcePlatform: 'kuwo', twin: true };
+    } catch (error) {
+      console.warn(`[wyy_twin] fallo con kuwo/${gemela.id}: ${error.message}`);
+    }
   }
-  return { ...audio, sourcePlatform: 'kuwo', twin: true };
+
+  throw new UpstreamError(
+    requireLossless
+      ? `Kuwo no entrega esta pista en FLAC: solo ofrece ${ultimoFormato || 'formatos con pérdida'}. No se reproduce en modo sin pérdida.`
+      : 'No se pudo obtener el audio de ninguna copia equivalente en Kuwo.',
+    requireLossless ? 422 : 502,
+  );
 }
 
 async function fetchSearchPage(platform, keyword, page) {
@@ -302,9 +307,6 @@ export function fallbackKeywords(keyword) {
 }
 
 export async function searchTracks({ platform, keyword, page }) {
-  const openSource = nativeSource(platform);
-  if (openSource) return openSource.search({ keyword, page });
-
   if (platform === 'wyy' && config.neteaseNative) {
     const nativo = await searchNetease({ keyword, page });
     const list = nativo.list.map(normalizeTrack).filter(Boolean);
@@ -327,18 +329,6 @@ export async function searchTracks({ platform, keyword, page }) {
 }
 
 export async function resolveAudio({ platform, songid, format, bitrate, time, sign, requireLossless = false }) {
-  const openSource = nativeSource(platform);
-  if (openSource) {
-    const audio = await openSource.resolve({ songid, format, bitrate, time });
-    if (requireLossless && audio.format !== 'flac') {
-      throw new UpstreamError(
-        `La fuente solo entrega ${audio.format.toUpperCase()} para esta pista. No se reproduce en modo sin pérdida.`,
-        422,
-      );
-    }
-    return audio;
-  }
-
   if (platform === 'wyy' && config.neteaseNative) {
     return resolveNeteaseAudio({ songid, format, bitrate, requireLossless });
   }
@@ -379,10 +369,6 @@ export async function resolveAudio({ platform, songid, format, bitrate, time, si
 }
 
 export async function fetchLyrics({ platform, songid, time, sign }) {
-  if (nativeSource(platform)) {
-    throw new UpstreamError('Este catálogo abierto no publica letras sincronizadas.', 404);
-  }
-
   if (platform === 'wyy' && config.neteaseNative) {
     const letra = await neteaseLyrics({ songid });
     if (letra.trim()) return letra.replace(/^\uFEFF/, '').trim();
@@ -403,14 +389,6 @@ export async function fetchLyrics({ platform, songid, time, sign }) {
 }
 
 export async function fetchAlbum({ platform, id, page, size }) {
-  const openSource = nativeSource(platform);
-  if (openSource) {
-    if (!openSource.album) {
-      throw new UpstreamError('Este catálogo no agrupa sus pistas en álbumes.', 404);
-    }
-    return openSource.album({ id, page, size });
-  }
-
   if (platform === 'wyy' && config.neteaseNative) {
     const nativo = await neteaseAlbum({ id, page, size });
     const list = nativo.list.map(normalizeTrack).filter(Boolean);

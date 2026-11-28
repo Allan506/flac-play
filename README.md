@@ -1,6 +1,6 @@
 # FLAC Play
 
-Buscador y reproductor de música con interfaz en español para cinco catálogos: **Kuwo** y **NetEase**, más los archivos abiertos **Internet Archive**, **Jamendo** y **Wikimedia Commons**. Permite buscar, escuchar, leer la letra (solo Kuwo y NetEase), consultar el álbum y preparar descargas en FLAC o MP3.
+Buscador y reproductor de música con interfaz en español para dos catálogos: **Kuwo** y **NetEase**. Permite buscar, escuchar, leer la letra, consultar el álbum y preparar descargas en FLAC o MP3.
 
 Los catálogos abiertos se resuelven en el propio servidor, sin depender de la API de Kuwo: cada adaptador (`server/sources/`) consulta la API pública correspondiente, filtra los archivos que no son FLAC y devuelve la misma forma de pista que los catálogos originales, de modo que la interfaz y la verificación funcionan igual en los cinco.
 
@@ -68,7 +68,7 @@ La imagen incluye `ffmpeg` y `ffprobe` y escribe los trabajos temporales en `/tm
 | `npm run start:once` | Servidor de producción sin supervisor (depuración). |
 | `npm test` | Pruebas unitarias con Vitest. |
 | `npm run typecheck` | TypeScript sin emitir archivos. |
-| `npm run verify:sources` | Comprueba contra la API real los cinco catálogos: búsqueda, resolución, `ffprobe` y descarga. Acepta `VERIFY_PLATFORMS=archive,jamendo,commons` y `VERIFY_KEYWORD`. |
+| `npm run verify:sources` | Comprueba contra la API real los dos catálogos: búsqueda, resolución, `ffprobe` y descarga. Acepta `VERIFY_PLATFORMS=kuwo,wyy` y `VERIFY_KEYWORD`. |
 
 ## Configuración
 
@@ -151,15 +151,14 @@ La comprobación es **orientativa**: el servidor lee los primeros 64 KB, detecta
 
 La respuesta incluye cabeceras de verificación: `X-FLACPlay-Requested-Format`, `X-FLACPlay-Source-Format`, `X-FLACPlay-Source-Codec`, `X-FLACPlay-Output-Format`, `X-FLACPlay-Actual-Bitrate`, `X-FLACPlay-Verified`, `X-FLACPlay-Cover` y, cuando hay portada, `X-FLACPlay-Cover-Resolution` (por ejemplo `1200x1200`).
 
-### Catálogos abiertos
+### Catálogos
 
 | Catálogo | Identificador | Letras | Álbumes | Notas |
 | --- | --- | --- | --- | --- |
-| Internet Archive | `archive` | No | Sí | Busca solo ítems con formato FLAC en `etree`, `netlabels`, `audio_music` y `78rpm`. Muchos ítems son digitalizaciones de 78 rpm a 11 kHz: el verificador los acepta si el corte de espectro coincide con su Nyquist real. |
-| Jamendo | `jamendo` | No | Sí, con `JAMENDO_CLIENT_ID` | Con clave usa la API oficial; sin clave usa Openverse y el identificador se deduce de la URL del audio. |
-| Wikimedia Commons | `commons` | No | No | Solo archivos FLAC. Exige un `User-Agent` identificable (Wikimedia rechaza los de navegador con `429`) y el servidor reintenta con espera. |
+| Kuwo | `kuwo` | Sí | Sí | Catálogo principal; entrega FLAC de 16/44,1 y, en algunas pistas, de 24 bits. |
+| NetEase | `wyy` | Sí | Sí | Pide primero el nivel `jymaster`, después `hires` y por último `lossless`. Sin cookie, NetEase no entrega audio y el servidor busca la misma pista en Kuwo. |
 
-Los tres comparten la misma verificación que Kuwo y NetEase: `ffprobe` confirma códec, frecuencia y duración, y el análisis de espectro contra el Nyquist real decide entre `lossless`, `high-cut` y `transcoded`. Los FLAC de Commons suelen venir de digitalizaciones con pérdida, así que es normal que se rechacen como `transcoded`; el aviso indica el corte medido.
+La única vía de audio sin pérdida son Kuwo y NetEase. Los catálogos abiertos (Internet Archive, Jamendo y Wikimedia Commons) se retiraron: sus FLAC rara vez son másters y muchos son digitalizaciones recodificadas. `POST /api/search`, `/api/resolve`, `/api/lyrics` y `/api/album` rechazan cualquier `platform` que no sea `kuwo` o `wyy`.
 
 ### FLAC auténtico
 
@@ -181,6 +180,17 @@ Veredictos posibles: `lossless` (corte ≥ 99,5 % del Nyquist real), `high-cut` 
 Como el listón es el Nyquist real, un FLAC de 96 kHz sobremuestreado desde un máster de 44,1 kHz se rechaza: mide 22 kHz de 48 kHz posibles. También se rechazan los FLAC de 192 kHz de Commons que sólo llevan contenido hasta 22 kHz.
 
 Consecuencia asumida: un máster legítimo pero muy limitado de banda (por ejemplo un FLAC con contenido sólo hasta 15 kHz) tampoco se entrega como FLAC, porque es indistinguible de un archivo recodificado con pérdida. En esos casos la interfaz explica el corte medido y ofrece las calidades MP3 del catálogo.
+
+### Máximo esfuerzo antes de rechazar
+
+Rechazar no es el primer recurso. Cuando el FLAC de la pista pedida no llega al Nyquist real, el servidor (`server/rescue.mjs` + `findVerifiedTwin()` en `server/download.mjs`) busca copias alternativas y verifica cada una con el mismo análisis:
+
+1. Otra edición de la misma canción en el mismo catálogo (single, recopilatorio, otra remasterización).
+2. La misma pista en el catálogo gemelo: Kuwo ↔ NetEase.
+
+Sólo se para en la primera copia que mide `lossless`; se descartan los karaokes, homenajes y versiones instrumentales, se exige título equivalente y una duración a menos de 6 s de la pedida, y se prefieren las coincidencias exactas de título. La descarga vuelve a verificar el archivo elegido byte a byte, así que el rescate nunca rebaja la garantía. En la interfaz, el diálogo de descarga avisa de que se entrega otra edición o la copia del otro catálogo y del corte medido en la original.
+
+Para NetEase se piden los niveles en orden de calidad `jymaster` → `hires` → `lossless`; sin cookie de cuenta, NetEase no entrega audio y el servidor resuelve la pista con la copia equivalente de Kuwo. Con `FLAC_RESCUE=false` se desactiva la búsqueda de copias alternativas (la verificación estricta sigue intacta).
 
 `POST /api/check` sigue aceptando `requireLossless` para filtrar la lista de calidades antes de descargar; en `/api/download` la exigencia es siempre la misma, se pida o no.
 
@@ -205,14 +215,14 @@ El servidor responde a las peticiones cruzadas con `Access-Control-Allow-Origin`
 npm test
 ```
 
-Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico, la selección de candidatos en modo estricto, los adaptadores de los tres catálogos abiertos y la validación de identificadores (los catálogos abiertos aceptan rutas y títulos; Kuwo y NetEase exigen identificadores numéricos).
+Cubren el formato de duraciones y tamaños, el parser LRC, los filtros de búsqueda, la detección de FLAC, MP3, M4A y OGG por bytes y por códec de `ffprobe`, la selección de portadas en máxima resolución, los veredictos de espectro del FLAC auténtico, la selección de candidatos en modo estricto, los adaptadores de los tres catálogos abiertos y la validación de identificadores (Kuwo y NetEase exigen identificadores numéricos).
 
 `tests/flac-lossless-enforcement.test.ts` genera audio real con `ffmpeg` y comprueba la garantía de arriba: ruido blanco de banda completa en FLAC (se acepta), el mismo audio pasado por MP3 128 y MP3 320 antes de guardarse como FLAC (se rechaza), un MP3 sólo renombrado a `.flac` (se rechaza por bytes y por códec), audio reducido a 8 kHz y reescalado a 44,1 kHz (se rechaza) y un FLAC de 96 kHz (se acepta). Si `ffmpeg` no está disponible, esas pruebas se omiten y el resto de la suite sigue corriendo.
 
 Para comprobar los catálogos reales, con el servidor en marcha:
 
 ```bash
-VERIFY_PLATFORMS=archive,jamendo,commons npm run verify:sources
+VERIFY_PLATFORMS=kuwo,wyy npm run verify:sources
 ```
 
 El script busca, resuelve, ejecuta `ffprobe` y descarga la primera pista de cada catálogo, y termina con un resumen de comprobaciones correctas.
@@ -220,8 +230,8 @@ El script busca, resuelve, ejecuta `ffprobe` y descarga la primera pista de cada
 ## Limitaciones conocidas
 
 - La disponibilidad y la calidad dependen de la fuente. Una pista puede existir en el catálogo pero devolver una vista previa o fallar temporalmente.
-- Kuwo depende de la API de catálogo: cuando esa API rechaza la resolución, la pista no se puede escuchar aunque aparezca en los resultados. NetEase y los tres catálogos abiertos se resuelven en el servidor.
-- Internet Archive y Wikimedia Commons no publican letras ni (Commons) álbumes; la interfaz oculta esas acciones según el catálogo.
+- Kuwo depende de la API de catálogo: cuando esa API rechaza la resolución, la pista no se puede escuchar aunque aparezca en los resultados.
+- NetEase sin cookie no entrega audio: el servidor usa entonces la copia equivalente de Kuwo, verificada con el mismo análisis de espectro.
 - Los archivos grandes se descargan en el navegador como `Blob`; en móviles con poca memoria conviene elegir MP3 o un FLAC de menos de ~50 MB.
 - No hay cuentas ni base de datos. El historial y las preferencias se guardan en `localStorage`.
 - La aplicación no aloja audio ni elude protecciones de la fuente. Descarga solo contenido al que tengas derecho de acceso.

@@ -34,7 +34,9 @@ export const config = {
   port: Number(process.env.PORT ?? 12000),
   upstreamApi: (process.env.UPSTREAM_API ?? 'https://flacplay-ik32bcxq.manus.space').replace(/\/+$/, ''),
   neteaseNative: (process.env.NETEASE_NATIVE ?? 'true') !== 'false',
-  jamendoClientId: process.env.JAMENDO_CLIENT_ID ?? '',
+  // Cuando el FLAC del catálogo pedido no pasa el análisis, buscar la misma
+  // pista en el otro catálogo antes de rechazar la descarga.
+  rescueFlac: (process.env.FLAC_RESCUE ?? 'true') !== 'false',
   neteaseCookie: process.env.NETEASE_COOKIE ?? '',
   upstreamTimeoutMs: Number(process.env.UPSTREAM_TIMEOUT_MS ?? 25_000),
   connectTimeoutMs: Number(process.env.CONNECT_TIMEOUT_MS ?? 20_000),

@@ -23,7 +23,8 @@ import {
   evaluateFlacDelivery,
   verifyFlacIntegrity,
 } from './lossless.mjs';
-import { resolveAudio } from './upstream.mjs';
+import { chooseQuality, resolveAudio, searchTracks } from './upstream.mjs';
+import { rankTwinCandidates, rescueKeyword, twinPlatform } from './rescue.mjs';
 import { assertAudioUrl, assertCoverUrl, audioRequestHeaders, sanitizeFilename, sleep } from './utils.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -466,65 +467,144 @@ async function fetchAudioPrefix(url, maxBytes = 65_536) {
   return response;
 }
 
+async function measureSource(url, resolved, input) {
+  const expected = input.expectedDurationSeconds || resolved.duration || 0;
+  const bitrate = Number(input.bitrate) || 0;
+  const response = await fetchAudioPrefix(url);
+  const contentRange = response.headers.get('content-range');
+  const rangeTotal = contentRange?.match(/\/(\d+)$/)?.[1];
+  const contentLength = Number(rangeTotal ?? response.headers.get('content-length') ?? 0) || 0;
+  const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
+  const prefix = await readPrefix(response);
+  const sniffedFormat = sniffAudioFormat(prefix);
+  const declaredFormat = codecToAudioFormat({ codec: resolved.format });
+  const actualFormat = sniffedFormat === 'unknown' ? declaredFormat : sniffedFormat;
+  const observedKbps = observedBitrateKbps(contentLength, expected);
+  const actualBitrate = Math.round(observedKbps) || bitrate;
+  const likelyPreview =
+    expected > 60 &&
+    contentLength > 0 &&
+    (actualFormat === 'flac' ? observedKbps < 400 : actualFormat !== 'unknown' && observedKbps < 64);
+
+  const spectrum = actualFormat === 'flac' ? await analyzeRemote(url).catch(() => null) : null;
+
+  return {
+    available: true,
+    url,
+    sourcePlatform: resolved.sourcePlatform ?? input.platform,
+    sourceFormat: actualFormat,
+    actualFormat,
+    actualBitrate,
+    formatMismatch:
+      actualFormat !== 'unknown' &&
+      actualFormat !== input.format &&
+      !(input.format === 'mp3' && actualFormat === 'flac'),
+    contentType,
+    contentLength,
+    expectedDurationSeconds: expected,
+    likelyPreview,
+    spectrum,
+    losslessVerified: spectrum ? spectrum.verdict === 'lossless' : false,
+    rescued: false,
+  };
+}
+
+/**
+ * Última red antes de rechazar un FLAC: busca la misma pista en el otro
+ * catálogo y devuelve la primera copia que pase el análisis de espectro.
+ */
+const MAX_RESCUES = 4;
+
+/**
+ * Copias alternativas de la pista pedida, en orden de preferencia: primero otra
+ * edición del mismo catálogo y después el catálogo gemelo. Es un generador para
+ * no pagar la segunda búsqueda si la primera copia ya verifica.
+ */
+export async function* rescueCandidates(input) {
+  const keyword = rescueKeyword({ name: input.title, artist: input.artist });
+  if (!keyword) return;
+
+  for (const platform of [input.platform, twinPlatform(input.platform)].filter(Boolean)) {
+    const { list } = await searchTracks({ platform, keyword, page: 1 }).catch(() => ({ list: [] }));
+    const ordenadas = rankTwinCandidates({ name: input.title }, list, {
+      expectedDuration: input.expectedDurationSeconds,
+      excludeId: platform === input.platform ? input.songid : '',
+      limit: 3,
+    });
+    for (const track of ordenadas) yield { platform, track };
+  }
+}
+
+export async function findVerifiedTwin(input) {
+  let intentos = 0;
+  for await (const { platform: otra, track: candidata } of rescueCandidates(input)) {
+    if (intentos >= MAX_RESCUES) break;
+    intentos += 1;
+    const calidad = chooseQuality(candidata.minfo, 'flac', '2000');
+    if (calidad.format !== 'flac') continue;
+    try {
+      const audio = await resolveAudio({
+        platform: otra,
+        songid: candidata.id,
+        format: calidad.format,
+        bitrate: calidad.bitrate,
+        time: candidata.time,
+        sign: candidata.sign,
+        requireLossless: true,
+      });
+      if (String(audio.format).toLowerCase() !== 'flac') continue;
+      const url = assertAudioUrl(audio.url);
+      const medicion = await measureSource(url, audio, { ...input, format: 'flac' });
+      if (medicion.losslessVerified) return { medicion, platform: otra, songid: candidata.id };
+    } catch {
+      /* se prueba la siguiente copia */
+    }
+  }
+  return null;
+}
+
 export async function probeSource(input) {
   let lastResult = null;
+  let fallo = null;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const resolved = await resolveAudio({
-      ...input,
-      requireLossless: String(input.format).toLowerCase() === 'flac',
-    });
-    const url = assertAudioUrl(resolved.url);
-    const expected = input.expectedDurationSeconds || resolved.duration || 0;
-    const bitrate = Number(input.bitrate) || 0;
-    const response = await fetchAudioPrefix(url);
-    const contentRange = response.headers.get('content-range');
-    const rangeTotal = contentRange?.match(/\/(\d+)$/)?.[1];
-    const contentLength = Number(rangeTotal ?? response.headers.get('content-length') ?? 0) || 0;
-    const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
-    const prefix = await readPrefix(response);
-    const sniffedFormat = sniffAudioFormat(prefix);
-    const declaredFormat = codecToAudioFormat({ codec: resolved.format });
-    const actualFormat = sniffedFormat === 'unknown' ? declaredFormat : sniffedFormat;
-    const observedKbps = observedBitrateKbps(contentLength, expected);
-    const actualBitrate = Math.round(observedKbps) || bitrate;
-    const likelyPreview =
-      expected > 60 &&
-      contentLength > 0 &&
-      (actualFormat === 'flac'
-        ? observedKbps < 400
-        : actualFormat !== 'unknown' && observedKbps < 64);
-
-    const spectrum =
-      actualFormat === 'flac' ? await analyzeRemote(url).catch(() => null) : null;
-
-    lastResult = {
-      available: true,
-      url,
-      sourcePlatform: resolved.sourcePlatform ?? input.platform,
-      sourceFormat: actualFormat,
-      actualFormat,
-      actualBitrate,
-      formatMismatch:
-        actualFormat !== 'unknown' &&
-        actualFormat !== input.format &&
-        !(input.format === 'mp3' && actualFormat === 'flac'),
-      contentType,
-      contentLength,
-      expectedDurationSeconds: expected,
-      likelyPreview,
-      spectrum,
-      losslessVerified: spectrum ? spectrum.verdict === 'lossless' : false,
-    };
+    try {
+      const resolved = await resolveAudio({
+        ...input,
+        requireLossless: String(input.format).toLowerCase() === 'flac',
+      });
+      lastResult = await measureSource(assertAudioUrl(resolved.url), resolved, input);
+    } catch (error) {
+      fallo = error;
+      break;
+    }
 
     const acceptable =
-      actualFormat === input.format ||
-      actualFormat === 'unknown' ||
-      (input.format === 'mp3' && actualFormat === 'flac');
-    if (acceptable || attempt === 2) return lastResult;
+      lastResult.actualFormat === input.format ||
+      lastResult.actualFormat === 'unknown' ||
+      (input.format === 'mp3' && lastResult.actualFormat === 'flac');
+    if (acceptable || attempt === 2) break;
     await sleep(250);
   }
 
+  const pedidoSinPerdida = String(input.format).toLowerCase() === 'flac';
+  const sinVerificar =
+    !lastResult || (lastResult.actualFormat === 'flac' && !lastResult.losslessVerified);
+
+  if (config.rescueFlac && pedidoSinPerdida && sinVerificar) {
+    const gemela = await findVerifiedTwin(input).catch(() => null);
+    if (gemela) {
+      return {
+        ...gemela.medicion,
+        rescued: true,
+        rescuedFrom: gemela.platform,
+        rescuedSongid: gemela.songid,
+        rejectedCutoffHz: lastResult?.spectrum?.cutoffHz ?? null,
+      };
+    }
+  }
+
+  if (fallo) throw fallo;
   return lastResult;
 }
 
@@ -539,6 +619,8 @@ export async function checkQualities(input) {
         bitrate: quality.bitrate,
         time: input.time,
         sign: input.sign,
+        title: input.title,
+        artist: input.artist,
         expectedDurationSeconds: input.expectedDurationSeconds,
       });
       const { url: _url, ...publicProbe } = probe;
@@ -741,11 +823,68 @@ export async function downloadAndPrepare(input, jobDir) {
 
   let lossless = null;
   let integrity = null;
+  let rescue = null;
+  let rescueTried = false;
   if (outputFormat === 'flac') {
     lossless = await analyzeFile(sourcePath);
-    const entrega = evaluateFlacDelivery(lossless);
+    let entrega = evaluateFlacDelivery(lossless);
+    if (!entrega.deliverable && config.rescueFlac) {
+      const rechazo = { cutoffHz: lossless.cutoffHz, limitHz: lossless.limitHz };
+      rescueTried = true;
+      let intentos = 0;
+      for await (const { platform: otra, track: candidata } of rescueCandidates(input)) {
+        if (intentos >= MAX_RESCUES) break;
+        intentos += 1;
+        const calidad = chooseQuality(candidata.minfo, 'flac', '2000');
+        if (calidad.format !== 'flac') continue;
+        try {
+          const gemelo = await resolveAudio({
+            platform: otra,
+            songid: candidata.id,
+            format: calidad.format,
+            bitrate: calidad.bitrate,
+            time: candidata.time,
+            sign: candidata.sign,
+            requireLossless: true,
+          });
+          if (String(gemelo.format).toLowerCase() !== 'flac') continue;
+          const gemeloUrl = assertAudioUrl(gemelo.url);
+          const gemeloTransfer = await fetchToFile(gemeloUrl, sourcePath, {
+            maxBytes: config.maxDownloadBytes,
+            timeoutMs: config.downloadTimeoutMs,
+            label: 'La copia equivalente',
+          });
+          const gemeloProbe = await probeFile(sourcePath);
+          if (codecToAudioFormat(gemeloProbe) !== 'flac') continue;
+          const gemeloLossless = await analyzeFile(sourcePath);
+          if (!evaluateFlacDelivery(gemeloLossless).deliverable) continue;
+
+          resolved = gemelo;
+          transfer = gemeloTransfer;
+          actual = gemeloProbe.duration;
+          sourceProbe = gemeloProbe;
+          lossless = gemeloLossless;
+          entrega = evaluateFlacDelivery(gemeloLossless);
+          rescue = { from: otra, songid: String(candidata.id), rejectedCutoffHz: rechazo.cutoffHz ?? 0 };
+          mark('rescate');
+          console.log(
+            `[${new Date().toISOString()}] flac_rescue platform=${otra} songid=${candidata.id} rejected_cutoff=${rechazo.cutoffHz} accepted_cutoff=${gemeloLossless.cutoffHz}`,
+          );
+          break;
+        } catch (error) {
+          console.warn(`[flac_rescue] fallo con ${otra}/${candidata.id}: ${error.message}`);
+        }
+      }
+    }
     if (!entrega.deliverable) {
-      throw new HttpError(422, entrega.code, entrega.message, entrega.details);
+      throw new HttpError(
+        422,
+        entrega.code,
+        rescueTried
+          ? `${entrega.message} Se buscaron otras ediciones de la misma pista y una copia en el otro catálogo sin encontrar ninguna verificada.`
+          : entrega.message,
+        { ...entrega.details, alternativesChecked: rescueTried },
+      );
     }
     // La verificación de integridad decodifica el archivo entero: se lanza ya y
     // se espera al final, en paralelo con la portada y la preparación.
@@ -865,6 +1004,8 @@ export async function downloadAndPrepare(input, jobDir) {
     requestedFormat: input.format,
     outputFormat,
     sourcePlatform: resolved.sourcePlatform ?? input.platform,
+    rescued: Boolean(rescue),
+    rescuedFrom: rescue?.from ?? '',
     converted: needsConversion,
     hasCover: Boolean(coverPath),
     coverWidth: coverSize.width,

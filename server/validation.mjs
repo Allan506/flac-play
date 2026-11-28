@@ -1,14 +1,11 @@
 import { z } from 'zod';
 import { HttpError } from './errors.mjs';
 
-export const NATIVE_PLATFORMS = ['archive', 'jamendo', 'commons'];
-
-const platform = z.enum(['kuwo', 'wyy', ...NATIVE_PLATFORMS], {
+const platform = z.enum(['kuwo', 'wyy'], {
   errorMap: () => ({ message: 'Elige uno de los catálogos disponibles.' }),
 });
 
 const NUMERIC_ID = /^(?!0+$)\d{1,32}$/;
-const OPEN_ID = /^[^\u0000-\u001f\u007f]{1,300}$/u;
 
 const songId = z
   .string({ required_error: 'Falta el identificador de la pista.' })
@@ -16,17 +13,10 @@ const songId = z
   .min(1, 'Falta el identificador de la pista.')
   .max(300, 'El identificador de la pista no es válido.');
 
-function validId(platformValue, value) {
-  return NATIVE_PLATFORMS.includes(platformValue)
-    ? OPEN_ID.test(String(value ?? ''))
-    : NUMERIC_ID.test(String(value ?? ''));
-}
-
-// Los catálogos abiertos usan identificadores de texto (ruta de archivo o título),
-// mientras que Kuwo y NetEase siguen exigiendo identificadores numéricos.
+// Kuwo y NetEase identifican cada pista con un número.
 function withIdRule(schema, field) {
   return schema.superRefine((value, ctx) => {
-    if (validId(value.platform, value[field])) return;
+    if (NUMERIC_ID.test(String(value[field] ?? ''))) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: field === 'id' ? 'El álbum no es válido.' : 'El identificador de la pista no es válido.',
@@ -118,6 +108,8 @@ const probeSchemaBase = z.object({
   bitrate,
   time,
   sign,
+  title: text(300),
+  artist: text(300),
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
 });
 
@@ -126,6 +118,8 @@ const checkSchemaBase = z.object({
   songid: songId,
   time,
   sign,
+  title: text(300),
+  artist: text(300),
   expectedDurationSeconds: z.coerce.number().min(0).max(36_000).default(0),
   requireLossless: z.boolean().default(false),
   qualities: z

@@ -55,13 +55,24 @@ describe('mapNeteaseSong', () => {
 });
 
 describe('levelChain', () => {
-  it('pide Hi-Res y luego lossless para FLAC', () => {
-    expect(levelChain('flac', '2000')).toEqual(['hires', 'lossless']);
+  it('pide máster, luego Hi-Res y luego lossless para FLAC', () => {
+    expect(levelChain('flac', '2000')).toEqual(['jymaster', 'hires', 'lossless']);
   });
 
   it('pide exhigh y cae a standard para MP3 320', () => {
     expect(levelChain('mp3', '320')).toEqual(['exhigh', 'standard']);
     expect(levelChain('mp3', '128')).toEqual(['standard']);
+  });
+});
+
+describe('pickKuwoMatch', () => {
+  it('empareja títulos en chino (el título no se puede reducir a vacío)', () => {
+    const meta = { name: '我只在乎你', artist: '鄧麗君', duration: 244 };
+    const lista = [
+      { id: '1', name: '我只在乎你', duration: 245, minfo: [{ format: 'flac', bitrate: '2000' }] },
+      { id: '2', name: '甜蜜蜜', duration: 200, minfo: [{ format: 'flac', bitrate: '2000' }] },
+    ];
+    expect(pickKuwoMatch(meta, lista, { requireLossless: true })?.id).toBe('1');
   });
 });
 

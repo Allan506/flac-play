@@ -22,7 +22,6 @@ import {
   removeJobDir,
 } from './download.mjs';
 import { HttpError, toPublicError } from './errors.mjs';
-import { NATIVE_CATALOGS } from './sources/index.mjs';
 import { fetchAlbum, fetchLyrics, resolveAudio, searchTracks } from './upstream.mjs';
 import {
   albumSchema,
@@ -141,7 +140,6 @@ api.get('/config', (_req, res) => {
       catalogs: [
         { value: 'kuwo', name: 'Kuwo', initial: 'K', lyrics: true, albums: true },
         { value: 'wyy', name: 'NetEase', initial: 'W', lyrics: true, albums: true },
-        ...NATIVE_CATALOGS,
       ],
       pageSize: 20,
       maxKeywordLength: 120,
@@ -267,6 +265,8 @@ api.post(
       res.setHeader('X-FLACPlay-Converted', result.converted ? '1' : '0');
       res.setHeader('X-FLACPlay-Cover', result.hasCover ? '1' : '0');
       res.setHeader('X-FLACPlay-Direct', result.direct ? '1' : '0');
+      res.setHeader('X-FLACPlay-Rescued', result.rescued ? '1' : '0');
+      if (result.rescuedFrom) res.setHeader('X-FLACPlay-Rescued-From', result.rescuedFrom);
       if (result.hasCover && result.coverWidth && result.coverHeight) {
         res.setHeader('X-FLACPlay-Cover-Resolution', `${result.coverWidth}x${result.coverHeight}`);
       }

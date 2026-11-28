@@ -1,4 +1,4 @@
-export type Platform = 'kuwo' | 'wyy' | 'archive' | 'jamendo' | 'commons';
+export type Platform = 'kuwo' | 'wyy';
 
 export type AudioFormat = 'mp3' | 'flac';
 
@@ -72,6 +72,8 @@ export interface ProbeResult {
   expectedDurationSeconds: number;
   likelyPreview: boolean;
   sourcePlatform?: Platform;
+  rescued?: boolean;
+  rescuedFrom?: Platform;
 }
 
 export type LosslessVerdict = 'lossless' | 'high-cut' | 'transcoded' | 'not-flac' | 'unknown';
@@ -101,6 +103,9 @@ export interface QualityCheck extends Quality {
   spectrum?: LosslessAnalysis | null;
   losslessVerified?: boolean;
   sourcePlatform?: Platform;
+  rescued?: boolean;
+  rescuedFrom?: Platform;
+  rejectedCutoffHz?: number | null;
   error: string;
 }
 

@@ -148,6 +148,8 @@ export function checkQualities(
     songid: string;
     time: number;
     sign: string;
+    title?: string;
+    artist?: string;
     expectedDurationSeconds: number;
     requireLossless?: boolean;
     qualities: Array<{ format: Quality['format']; bitrate: string }>;

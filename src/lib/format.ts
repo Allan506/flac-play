@@ -71,17 +71,11 @@ export function normalizeText(value: string): string {
 const SOURCE_TRACK_URL: Record<Platform, (track: Track) => string> = {
   kuwo: (track) => `https://www.kuwo.cn/play_detail/${encodeURIComponent(track.id)}`,
   wyy: (track) => `https://music.163.com/#/song?id=${encodeURIComponent(track.id)}`,
-  archive: (track) => `https://archive.org/details/${encodeURIComponent(track.id.split('/')[0])}`,
-  jamendo: (track) => `https://www.jamendo.com/track/${encodeURIComponent(track.id)}`,
-  commons: (track) => `https://commons.wikimedia.org/wiki/${encodeURIComponent(track.id.replace(/ /g, '_'))}`,
 };
 
 const SOURCE_ALBUM_URL: Record<Platform, (albumId: string) => string> = {
   kuwo: (albumId) => `https://www.kuwo.cn/album_detail/${encodeURIComponent(albumId)}/`,
   wyy: (albumId) => `https://music.163.com/#/album?id=${encodeURIComponent(albumId)}`,
-  archive: (albumId) => `https://archive.org/details/${encodeURIComponent(albumId)}`,
-  jamendo: (albumId) => `https://www.jamendo.com/album/${encodeURIComponent(albumId)}`,
-  commons: () => 'https://commons.wikimedia.org/',
 };
 
 export function sourceTrackUrl(platform: Platform, track: Track): string {

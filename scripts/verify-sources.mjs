@@ -3,8 +3,8 @@
 // formato real con ffprobe (a través de /api/probe) y confirma que la descarga
 // FLAC llega con cabecera fLaC. Uso: node scripts/verify-sources.mjs [base] [keyword]
 const base = (process.argv[2] ?? process.env.API_BASE ?? 'http://localhost:12001').replace(/\/+$/, '');
-const keyword = process.argv[3] ?? 'piano';
-const PLATFORMS = (process.env.VERIFY_PLATFORMS ?? 'archive,jamendo,commons').split(',');
+const keyword = process.argv[3] ?? 'adele';
+const PLATFORMS = (process.env.VERIFY_PLATFORMS ?? 'kuwo,wyy').split(',');
 
 try {
   const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(15_000) });
@@ -56,7 +56,8 @@ for (const platform of PLATFORMS) {
     songid: track.id,
     format: quality.format,
     bitrate: quality.bitrate,
-    time: track.duration,
+    time: track.time,
+    sign: track.sign,
   };
 
   const resolve = await post('/api/resolve', payload);

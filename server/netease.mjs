@@ -157,7 +157,9 @@ export async function neteaseSongDetail(songid) {
 }
 
 export function levelChain(format, bitrate) {
-  if (String(format).toLowerCase() === 'flac') return ['hires', 'lossless'];
+  // Del máster hacia abajo: si la cuenta no tiene acceso al nivel superior,
+  // NetEase devuelve un elemento sin URL y se prueba el siguiente.
+  if (String(format).toLowerCase() === 'flac') return ['jymaster', 'hires', 'lossless'];
   return Number(bitrate) >= 320 ? ['exhigh', 'standard'] : ['standard'];
 }
 

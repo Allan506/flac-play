@@ -222,6 +222,8 @@ export function DownloadModal({
         songid: track.id,
         time: track.time,
         sign: track.sign,
+        title: track.name,
+        artist: track.artist,
         expectedDurationSeconds: track.duration,
         requireLossless: strictLossless,
         qualities: qualities.map((item) => ({ format: item.format, bitrate: item.bitrate })),
@@ -700,6 +702,19 @@ export function DownloadModal({
                 ? 'integridad MD5 fallida'
                 : 'se vuelve a verificar al descargar'}
             </span>
+            {selectedCheck.rescued && selectedCheck.rescuedFrom ? (
+              <span className="rescue-note">
+                {selectedCheck.rescuedFrom === platform
+                  ? 'Esta edición no pasa el análisis'
+                  : `La copia de ${platformName(platform)} no pasa el análisis`}
+                {selectedCheck.rejectedCutoffHz
+                  ? ` (corta a ${formatKhz(selectedCheck.rejectedCutoffHz)})`
+                  : ''}
+                {selectedCheck.rescuedFrom === platform
+                  ? '; se entrega otra edición verificada del mismo catálogo.'
+                  : `; se entrega la misma pista verificada de ${platformName(selectedCheck.rescuedFrom)}.`}
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}

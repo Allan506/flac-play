@@ -7,7 +7,7 @@
 - `npm test` — Vitest (`tests/**/*.test.ts`).
 - `npm start` — production server under `scripts/serve-prod.sh` (supervisor + health watchdog).
 - `npm run start:once` — plain `node server/index.mjs` for debugging.
-- `VERIFY_PLATFORMS=archive,jamendo,commons npm run verify:sources [base] [keyword]` — hits a running API and checks search, resolve, ffprobe and download per catalog.
+- `VERIFY_PLATFORMS=kuwo,wyy npm run verify:sources [base] [keyword]` — hits a running API and checks search, resolve, ffprobe and download per catalog.
 
 `ffmpeg`/`ffprobe` are resolved in this order: `FFMPEG_PATH`/`FFPROBE_PATH`, the static package binaries, then the `PATH` (`/usr/local/bin`, `/usr/bin`, `/bin`, `/opt/homebrew/bin`, `/snap/bin`). `server/tools.mjs` implements the lookup and `server/config.mjs` runs it once at import.
 
@@ -25,14 +25,15 @@
 
 ## Catalogs
 
-- Five platforms: `kuwo`, `wyy` (via `UPSTREAM_API`) and `archive`, `jamendo`, `commons` (resolved in-process by `server/sources/*.mjs`). `server/sources/index.mjs` is the registry: `NATIVE_SOURCES` maps platform → `{ search, resolve, album, lyrics }`, `nativeSource()` returns `null` for the upstream catalogs so the dispatcher falls through to `server/upstream.mjs`.
-- `NATIVE_PLATFORMS` in `server/validation.mjs` drives identifier validation: open catalogs accept text IDs (file paths, `File:` titles) up to 300 chars, Kuwo/NetEase still require numeric IDs. Zero-only IDs are rejected everywhere.
-- `audioRequestHeaders(url)` in `server/utils.mjs` is the single place for per-host headers. Wikimedia returns `429` to browser UAs and needs the identifiable `config.wikimediaUserAgent`; Kuwo/NetEase need their referers.
+- Two platforms only: `kuwo` and `wyy` (via `UPSTREAM_API`). `server/sources/` was deleted with the open catalogs (archive, jamendo, commons); do not reintroduce `nativeSource`/`NATIVE_CATALOGS`.
+- `server/validation.mjs` accepts only `kuwo`/`wyy` and requires numeric IDs (zero-only IDs are rejected).
+- `audioRequestHeaders(url)` in `server/utils.mjs` is the single place for per-host headers. Kuwo/NetEase need their referers.
 - `fetchWithRetry(url, options, { attempts })` in `server/http.mjs` retries `429`/`503` with backoff. Use it for every new remote call instead of raw `fetch`.
 - Each `.mjs` module has a hand-written `.d.mts` sibling because `tsc` type-checks `tests/`. Adding an export without updating the `.d.mts` breaks `npm run build`.
-- The frontend mirrors the server: `Platform` union in `src/types.ts`, `src/lib/platforms.ts` for names/overline/lyrics gating, and `catalogs` from `/api/config` (which now carries `lyrics` and `albums` flags). `FALLBACK_CONFIG` in `App.tsx` must list all five.
-- Internet Archive items are often 78 rpm transfers at 11 kHz; the spectrum check compares against the real Nyquist of the file, so they can be `lossless`. Commons 192 kHz transfers whose content stops at 22 kHz are upsampled masters and are rejected.
-- FLAC delivery also requires bit-exact audio: `audioDigest()` hashes the decoded PCM as `s32le` with SHA-256 and source/delivered hashes must match (`422 LOSSLESS_AUDIO_CHANGED`). Do not use `-f md5`/`-f framemd5` for this: both silently force `pcm_s16le` and hide 24→16 bit changes. Commons FLACs are frequently lossy-sourced and get `422 LOSSLESS_NOT_VERIFIED` — expected, not a bug.
+- The frontend mirrors the server: `Platform` union in `src/types.ts`, `src/lib/platforms.ts` for names/overline/lyrics gating, and `catalogs` from `/api/config` (which carries `lyrics` and `albums` flags). `FALLBACK_CONFIG` in `App.tsx` must list both catalogs.
+- `server/rescue.mjs` ranks alternative copies (`rankTwinCandidates`) and `server/download.mjs` (`rescueCandidates`, `findVerifiedTwin`) uses it when a FLAC fails: first another edition in the same catalog, then the twin catalog. Chinese titles must survive normalization — `normalizeRescueTitle` keeps CJK, and `normalizeTitle` in `upstream.mjs` now aliases it (the old ASCII-only regex emptied every CJK title and killed the NetEase→Kuwo fallback).
+- NetEase quality ladder is `jymaster` → `hires` → `lossless` (`levelChain` in `server/netease.mjs`); each level can come back without a URL, so keep the loop. The NetEase→Kuwo twin resolver iterates up to 3 ranked matches because search often advertises FLAC that the resolver does not serve.
+- FLAC delivery also requires bit-exact audio: `audioDigest()` hashes the decoded PCM as `s32le` with SHA-256 and source/delivered hashes must match (`422 LOSSLESS_AUDIO_CHANGED`). Do not use `-f md5`/`-f framemd5` for this: both silently force `pcm_s16le` and hide 24→16 bit changes. A catalog FLAC that fails the spectrum test gets `422 LOSSLESS_NOT_VERIFIED` after the rescue pass — expected, not a bug.
 
 ## Incident notes
 
